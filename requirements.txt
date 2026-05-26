@@ -4,7 +4,8 @@
 
 # Core stream-processing engine. Phase 1 is local-only so we skip the
 # [gcp] extras (Pub/Sub, BigQuery IO) — add them back in Phase 2.
-apache-beam==2.73.0
+# GCP extras give us BigQuery + GCS + Dataflow runner support
+apache-beam[gcp]==2.73.0
 
 # Postgres driver (binary wheel — no libpq compile dance)
 psycopg2-binary==2.9.10

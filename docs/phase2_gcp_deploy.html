@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phase 2 — GCP Deployment (Cost-Safe) · Supply Chain Fraud Detection</title>
+<style>
+  :root{
+    --blue:#0053e2; --blue-110:#003fc7; --blue-130:#002a93;
+    --spark:#ffc220; --spark-10:#fff4d6; --spark-140:#995213;
+    --red:#ea1100; --green:#2a8703;
+    --gray-160:#1c1c1c; --gray-100:#5a5a5a; --gray-50:#bfbfbf; --gray-10:#f2f2f2;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--gray-160);background:#fff;}
+  header{background:var(--blue);color:#fff;padding:28px 40px;border-bottom:4px solid var(--spark);}
+  header h1{font-size:28px;font-weight:700;}
+  header p{opacity:.92;margin-top:6px;}
+  .layout{display:grid;grid-template-columns:260px 1fr;min-height:100vh;}
+  nav{background:var(--gray-10);padding:24px 18px;border-right:1px solid var(--gray-50);position:sticky;top:0;height:100vh;overflow-y:auto;}
+  nav h3{font-size:11px;text-transform:uppercase;color:var(--gray-100);margin:14px 0 8px;letter-spacing:.5px;}
+  nav a{display:block;padding:7px 10px;color:var(--gray-160);text-decoration:none;border-radius:4px;font-size:14px;margin-bottom:2px;}
+  nav a:hover{background:#fff;color:var(--blue);}
+  nav a.active{background:var(--blue);color:#fff;font-weight:600;}
+  main{padding:32px 48px;max-width:980px;}
+  section{margin-bottom:48px;padding-bottom:24px;border-bottom:1px solid var(--gray-10);}
+  h2{font-size:24px;color:var(--blue-130);margin-bottom:14px;border-left:5px solid var(--spark);padding-left:14px;}
+  h3{font-size:18px;margin:22px 0 10px;color:var(--blue-110);}
+  h4{font-size:15px;margin:16px 0 8px;color:var(--gray-160);}
+  p{margin-bottom:12px;}
+  code{background:var(--gray-10);padding:2px 6px;border-radius:3px;font-family:"SF Mono",Menlo,monospace;font-size:.92em;color:#b3146e;}
+  pre{background:#1e1e1e;color:#e6e6e6;padding:16px 18px;border-radius:6px;overflow-x:auto;font:13.5px/1.5 "SF Mono",Menlo,monospace;margin:10px 0 14px;position:relative;}
+  pre code{background:transparent;color:inherit;padding:0;}
+  .copy-btn{position:absolute;top:8px;right:8px;background:var(--blue);color:#fff;border:0;padding:4px 9px;border-radius:3px;font-size:11px;cursor:pointer;opacity:0;transition:opacity .15s;}
+  pre:hover .copy-btn{opacity:1;}
+  .copy-btn:hover{background:var(--blue-110);}
+  .copy-btn.copied{background:var(--green);}
+  ul,ol{margin:0 0 14px 22px;}
+  li{margin-bottom:5px;}
+  table{width:100%;border-collapse:collapse;margin:10px 0 16px;font-size:14px;}
+  th,td{padding:9px 11px;border:1px solid var(--gray-50);text-align:left;vertical-align:top;}
+  th{background:var(--blue);color:#fff;font-weight:600;}
+  tr:nth-child(even) td{background:var(--gray-10);}
+
+  .callout{padding:14px 16px;border-left:4px solid;border-radius:0 4px 4px 0;margin:14px 0;}
+  .info{background:#e6f0ff;border-color:var(--blue);}
+  .warn{background:var(--spark-10);border-color:var(--spark);}
+  .crit{background:#ffe5e3;border-color:var(--red);}
+  .ok  {background:#e8f5e0;border-color:var(--green);}
+  .callout strong{display:block;margin-bottom:4px;font-size:14px;text-transform:uppercase;letter-spacing:.4px;}
+
+  .badge{display:inline-block;padding:2px 9px;border-radius:11px;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-left:8px;vertical-align:middle;}
+  .b-todo  {background:var(--gray-50);color:#fff;}
+  .b-start {background:var(--red);color:#fff;animation:pulse 1.6s infinite;}
+  .b-done  {background:var(--green);color:#fff;}
+  .b-cost  {background:var(--spark);color:var(--spark-140);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.55;}}
+
+  .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin:14px 0 0;}
+  .status-card{background:#fff;border:1px solid var(--gray-50);border-radius:5px;padding:10px 12px;font-size:13px;}
+  .status-card .label{display:block;font-size:11px;color:var(--gray-100);text-transform:uppercase;margin-bottom:3px;}
+  .status-banner{background:linear-gradient(135deg,var(--blue) 0%,var(--blue-130) 100%);color:#fff;padding:22px 28px;border-radius:8px;margin-bottom:30px;}
+  .status-banner h2{color:#fff;border-left-color:var(--spark);}
+  .status-banner .status-card{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.25);color:#fff;}
+  .status-banner .status-card .label{color:rgba(255,255,255,.75);}
+
+  .cost-table th{background:var(--spark);color:var(--spark-140);}
+  .price{font-weight:700;color:var(--green);}
+  .price-bad{font-weight:700;color:var(--red);}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🚀 Phase 2 — GCP Deployment <span class="badge b-cost">COST-SAFE</span></h1>
+  <p>Manual on-demand Dataflow batch jobs. Pay only for what you run. Designed so an idle pipeline costs <strong>$0/month</strong>.</p>
+</header>
+
+<div class="layout">
+<nav id="toc">
+  <h3>Status</h3>
+  <a href="#status">⚡ Where you are</a>
+  <h3>Concepts</h3>
+  <a href="#why-batch">Why batch &gt; streaming</a>
+  <a href="#cost-math">Cost math (real $)</a>
+  <a href="#architecture">Architecture</a>
+  <h3>Prereqs</h3>
+  <a href="#prereq-tools">1 · Local tools</a>
+  <a href="#prereq-gcp">2 · GCP account</a>
+  <h3>Steps</h3>
+  <a href="#step-1">3 · Project setup</a>
+  <a href="#step-2">4 · One-shot setup.sh</a>
+  <a href="#step-3">5 · Manual trigger</a>
+  <a href="#step-4">6 · Verify in BigQuery</a>
+  <h3>Safety</h3>
+  <a href="#guardrails">Cost guardrails</a>
+  <a href="#teardown">Teardown (when done)</a>
+  <a href="#troubleshooting">Troubleshooting</a>
+  <a href="#beyond">Beyond Phase 2</a>
+</nav>
+
+<main>
+
+<!-- ───────────────────────── STATUS ───────────────────────── -->
+<div class="status-banner" id="status">
+  <h2 style="margin-bottom:10px;">Where you are 🐶</h2>
+  <p style="opacity:.9;margin-bottom:14px;">Phase 1 (local) is ✅. Phase 2 ships your same business logic to Google Cloud. Same fraud rules, same medallion, just different I/O at the edges.</p>
+  <div class="status-grid">
+    <div class="status-card"><span class="label">Phase 1 local</span>✅ Working</div>
+    <div class="status-card"><span class="label">GCP account</span>⚪ Your turn</div>
+    <div class="status-card"><span class="label">setup.sh</span>⚪ Run once</div>
+    <div class="status-card"><span class="label">trigger_pipeline.sh</span>⚪ Run on-demand</div>
+    <div class="status-card"><span class="label">Idle cost</span><span class="price">$0/mo</span></div>
+    <div class="status-card"><span class="label">Cost per run</span><span class="price">&lt; $0.10</span></div>
+  </div>
+</div>
+
+<!-- ───────────────────────── WHY BATCH ───────────────────────── -->
+<section id="why-batch">
+  <h2>Why batch &gt; streaming for your use case</h2>
+  <p>You said: <em>"I don't want any job piled up data and I end up paying GCP."</em> Smart instinct. Here's the brutal truth about Dataflow streaming costs:</p>
+
+  <table class="cost-table">
+    <thead><tr><th>Mode</th><th>Always-on?</th><th>Min monthly cost</th><th>Good for</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Streaming</strong> (Pub/Sub → Dataflow → BQ)</td><td>YES, 24/7</td><td class="price-bad">~$50-200/mo<br>(idle worker + streaming engine)</td><td>Real prod with non-stop traffic</td></tr>
+      <tr><td><strong>Batch on-demand</strong> ✅ <em>(what we're building)</em></td><td>NO, only when triggered</td><td class="price">$0/mo idle<br>~$0.05-0.10 per run</td><td>Learning, dev, periodic detection</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout ok">
+    <strong>Design Decision</strong>
+    Phase 2 uses <strong>batch mode triggered manually</strong>. The Dataflow job spins up, reads your GCS file, writes to BigQuery, and <strong>shuts down completely</strong>. No idle workers. No streaming engine. No surprise bills.
+  </div>
+
+  <p>You can graduate to streaming later when you have real Pub/Sub traffic and a real budget. For learning + occasional runs, batch is the right answer.</p>
+</section>
+
+<!-- ───────────────────────── COST MATH ───────────────────────── -->
+<section id="cost-math">
+  <h2>Cost math (real dollars) <span class="badge b-cost">read this</span></h2>
+  <p>Estimated cost per manual run with our setup (max 2 × <code>e2-small</code> workers, ~5K events, ~30 sec runtime):</p>
+  <table class="cost-table">
+    <thead><tr><th>Service</th><th>Per run</th><th>How it's billed</th></tr></thead>
+    <tbody>
+      <tr><td>Dataflow workers</td><td class="price">~$0.03</td><td>$0.056/hr × 2 workers × ~30 sec</td></tr>
+      <tr><td>Dataflow shuffle</td><td class="price">~$0.01</td><td>$0.011/GB scanned</td></tr>
+      <tr><td>BigQuery storage</td><td class="price">~$0.00</td><td>$0.02/GB/mo (we use bytes)</td></tr>
+      <tr><td>BigQuery load jobs</td><td class="price">$0.00</td><td><strong>FREE</strong> (vs streaming inserts at $0.05/GB)</td></tr>
+      <tr><td>GCS storage</td><td class="price">~$0.00</td><td>$0.02/GB/mo; lifecycle deletes after 7d</td></tr>
+      <tr><td>BigQuery queries</td><td class="price">$0.00</td><td>First 1 TB/month FREE on-demand</td></tr>
+      <tr><th>Total per run</th><th class="price">~$0.05-0.10</th><th>You'd need 200+ runs to spend $20</th></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <strong>Safety net</strong>
+    <code>setup.sh</code> also creates a <strong>$25 budget alert</strong>. Email pings at 20%/40%/80%/100%. Even if I'm wrong about cost, you'll know <em>way</em> before disaster.
+  </div>
+</section>
+
+<!-- ───────────────────────── ARCHITECTURE ───────────────────────── -->
+<section id="architecture">
+  <h2>Architecture (what changes vs Phase 1)</h2>
+  <table>
+    <thead><tr><th>Concern</th><th>Phase 1 (local)</th><th>Phase 2 (GCP)</th></tr></thead>
+    <tbody>
+      <tr><td>Mock data</td><td><code>scripts/generate_mock_data.py</code> → JSONL</td><td><strong>Same script</strong> → uploaded to GCS</td></tr>
+      <tr><td>Read source</td><td><code>ReadFromText("data/*.jsonl")</code></td><td><code>ReadFromText("gs://bucket/input/*.jsonl")</code></td></tr>
+      <tr><td>Fraud logic</td><td><code>pipeline/transforms.py</code></td><td><strong>UNCHANGED</strong> — same module</td></tr>
+      <tr><td>Bronze/Silver/Gold sinks</td><td>Postgres (<code>WriteBronze/Silver/Gold</code>)</td><td><code>WriteToBigQuery</code> (FILE_LOADS)</td></tr>
+      <tr><td>Vendor baseline</td><td><code>psycopg2</code> → Postgres</td><td><code>google-cloud-bigquery</code> client</td></tr>
+      <tr><td>Runner</td><td><code>DirectRunner</code></td><td><code>DataflowRunner</code> (batch)</td></tr>
+      <tr><td>Trigger</td><td><code>python -m pipeline.main</code></td><td><code>./gcp/trigger_pipeline.sh</code></td></tr>
+    </tbody>
+  </table>
+  <p>Notice: <strong>your fraud logic doesn't change at all</strong>. Clean separation between business rules and I/O pays off here. That's the whole point of <code>pipeline/transforms.py</code> being I/O-agnostic.</p>
+</section>
+
+<!-- ───────────────────────── PREREQS — TOOLS ───────────────────────── -->
+<section id="prereq-tools">
+  <h2>1 · Local tools <span class="badge b-todo">verify</span></h2>
+  <p>You already have most of these from Phase 1. Check what's missing:</p>
+  <pre><button class="copy-btn">Copy</button><code># Should all print versions, not "command not found"
+gcloud --version
+gsutil version
+bq version
+python --version    # 3.12.x from your venv
+psql --version      # for local verification</code></pre>
+  <p>Missing <code>gcloud</code>? Install Google Cloud SDK:</p>
+  <pre><button class="copy-btn">Copy</button><code>brew install --cask google-cloud-sdk
+# Or download from: https://cloud.google.com/sdk/docs/install</code></pre>
+</section>
+
+<!-- ───────────────────────── PREREQS — GCP ───────────────────────── -->
+<section id="prereq-gcp">
+  <h2>2 · GCP account <span class="badge b-todo">your turn</span></h2>
+  <ol>
+    <li><strong>Sign up</strong> at <a href="https://cloud.google.com/free" target="_blank">cloud.google.com/free</a> — get $300 free credit for 90 days</li>
+    <li><strong>Create a new project</strong> dedicated to this experiment. Don't mix with prod stuff.</li>
+    <li><strong>Enable billing</strong> on the project (required even for free-tier services)</li>
+    <li><strong>Authenticate locally:</strong></li>
+  </ol>
+  <pre><button class="copy-btn">Copy</button><code>gcloud auth login
+gcloud auth application-default login
+gcloud config set project YOUR-PROJECT-ID
+
+# Verify
+gcloud config list</code></pre>
+  <div class="callout info">
+    <strong>Walmart users</strong>
+    Use the <a href="https://wmlink.wal-mart.com/onboard" target="_blank">AI Innovation Lab</a> for a sponsored GCP project. Way cheaper than personal GCP for experiments.
+  </div>
+</section>
+
+<!-- ───────────────────────── STEP 1 — PROJECT SETUP ───────────────────────── -->
+<section id="step-1">
+  <h2>3 · Set your env vars <span class="badge b-start">do this</span></h2>
+  <p>Find your billing account ID (you only need this once):</p>
+  <pre><button class="copy-btn">Copy</button><code>gcloud billing accounts list</code></pre>
+  <p>Now export your config — paste these into your terminal:</p>
+  <pre><button class="copy-btn">Copy</button><code>export PROJECT_ID="your-project-id-here"
+export BILLING_ACCOUNT_ID="01234A-567890-ABCDEF"
+export REGION="us-central1"             # cheapest region
+export BUCKET="${PROJECT_ID}-fraud-pipeline"
+export DATASET="fraud_detection"</code></pre>
+  <div class="callout warn">
+    <strong>Persist across shells</strong>
+    Add these exports to <code>~/.zshrc</code> so you don't have to retype them every time you open a terminal.
+  </div>
+</section>
+
+<!-- ───────────────────────── STEP 2 — SETUP.SH ───────────────────────── -->
+<section id="step-2">
+  <h2>4 · Run <code>setup.sh</code> (one-time) <span class="badge b-todo">~3 min</span></h2>
+  <p>This is idempotent — safe to re-run. It creates:</p>
+  <ul>
+    <li>Enables required APIs (Dataflow, BigQuery, Storage, IAM, Billing)</li>
+    <li>GCS bucket with 7-day lifecycle on <code>staging/</code>, <code>temp/</code>, <code>input/</code></li>
+    <li>BigQuery dataset + 4 tables (bronze, silver, gold, vendor_90day_baseline)</li>
+    <li>Service account <code>fraud-pipeline-sa</code> with least-privilege IAM</li>
+    <li><strong>$25 budget alert at 20/40/80/100% (the safety net)</strong></li>
+  </ul>
+  <pre><button class="copy-btn">Copy</button><code>cd ~/workspace/supply-chain-fraud-detection
+./gcp/setup.sh</code></pre>
+  <p>Expected end output:</p>
+  <pre><button class="copy-btn">Copy</button><code>✅ GCP setup complete.
+   Bucket   : gs://YOUR-PROJECT-fraud-pipeline
+   Dataset  : YOUR-PROJECT:fraud_detection
+   SA email : fraud-pipeline-sa@YOUR-PROJECT.iam.gserviceaccount.com
+   Budget   : $25 USD with alerts at 20/40/80/100%</code></pre>
+</section>
+
+<!-- ───────────────────────── STEP 3 — MANUAL TRIGGER ───────────────────────── -->
+<section id="step-3">
+  <h2>5 · Run the pipeline on demand <span class="badge b-start">the fun part</span></h2>
+  <p>This is the script you'll run every time you want fraud detection to happen. <strong>Nothing automatic — only when you execute this.</strong></p>
+
+  <pre><button class="copy-btn">Copy</button><code># Defaults: 1000 WMS + 1000 ERP events. Override if you want.
+./gcp/trigger_pipeline.sh
+
+# Or generate more / fewer events:
+NUM_WMS=5000 NUM_INVOICES=5000 ./gcp/trigger_pipeline.sh</code></pre>
+
+  <h3>What this does (in order)</h3>
+  <ol>
+    <li><strong>Generates mock data locally</strong> via <code>scripts/generate_mock_data.py</code> — free, offline</li>
+    <li><strong>Uploads JSONL files to GCS</strong> at <code>gs://BUCKET/input/RUN_ID/</code></li>
+    <li><strong>Submits a Dataflow BATCH job</strong> with <code>--max_num_workers=2 --machine_type=e2-small</code></li>
+    <li><strong>Dataflow processes everything and EXITS</strong> — worker scales to zero</li>
+  </ol>
+
+  <h3>While it's running</h3>
+  <p>Watch the job in real-time at:</p>
+  <pre><button class="copy-btn">Copy</button><code>https://console.cloud.google.com/dataflow/jobs?project=${PROJECT_ID}</code></pre>
+  <p>You'll see the DAG visually — same graph as Phase 1, just on Google's infra. Each transform shows live throughput + worker count.</p>
+
+  <div class="callout info">
+    <strong>First run is slow (~5 min)</strong>
+    Dataflow has to upload your code package to GCS and spin up worker VMs from scratch. Subsequent runs are faster (~2-3 min) thanks to cached images.
+  </div>
+</section>
+
+<!-- ───────────────────────── STEP 4 — VERIFY ───────────────────────── -->
+<section id="step-4">
+  <h2>6 · Verify results in BigQuery <span class="badge b-todo">after job completes</span></h2>
+
+  <h3>Quick row counts</h3>
+  <pre><button class="copy-btn">Copy</button><code>bq query --use_legacy_sql=false "
+  SELECT 'bronze' AS layer, COUNT(*) AS rows FROM \`${PROJECT_ID}.${DATASET}.bronze_raw_events\`
+  WHERE DATE(event_timestamp) = CURRENT_DATE()
+  UNION ALL
+  SELECT 'silver', COUNT(*) FROM \`${PROJECT_ID}.${DATASET}.silver_deduplicated_invoices\`
+  WHERE DATE(invoice_timestamp) = CURRENT_DATE()
+  UNION ALL
+  SELECT 'gold',   COUNT(*) FROM \`${PROJECT_ID}.${DATASET}.gold_fraud_alerts\`
+  WHERE DATE(detected_at) = CURRENT_DATE()
+  ORDER BY 1
+"</code></pre>
+
+  <h3>Alert breakdown</h3>
+  <pre><button class="copy-btn">Copy</button><code>bq query --use_legacy_sql=false "
+  SELECT rule_name, severity, COUNT(*) AS alerts
+  FROM \`${PROJECT_ID}.${DATASET}.gold_fraud_alerts\`
+  WHERE DATE(detected_at) = CURRENT_DATE()
+  GROUP BY 1, 2 ORDER BY 1, 2
+"</code></pre>
+
+  <h3>Top critical anomalies</h3>
+  <pre><button class="copy-btn">Copy</button><code>bq query --use_legacy_sql=false "
+  SELECT invoice_id, vendor_id, severity, reason
+  FROM \`${PROJECT_ID}.${DATASET}.gold_fraud_alerts\`
+  WHERE DATE(detected_at) = CURRENT_DATE() AND severity = 'CRITICAL'
+  LIMIT 10
+"</code></pre>
+
+  <div class="callout ok">
+    <strong>Sanity check</strong>
+    Counts should roughly match what you saw in Phase 1: ~2 critical anomalies for <code>V-1005</code>, ~50-100 velocity alerts for <code>V-1003</code>, and ~50-200 fallback alerts for unknown vendors.
+  </div>
+</section>
+
+<!-- ───────────────────────── GUARDRAILS ───────────────────────── -->
+<section id="guardrails">
+  <h2>Cost guardrails (already baked in) <span class="badge b-cost">don't remove</span></h2>
+  <table>
+    <thead><tr><th>Guardrail</th><th>Where</th><th>What it prevents</th></tr></thead>
+    <tbody>
+      <tr><td><code>--max_num_workers=2</code></td><td><code>trigger_pipeline.sh</code></td><td>Runaway autoscaling on a stuck job</td></tr>
+      <tr><td><code>--machine_type=e2-small</code></td><td><code>trigger_pipeline.sh</code></td><td>Cheapest practical VM (~$0.02/hr)</td></tr>
+      <tr><td><code>--disk_size_gb=25</code></td><td><code>trigger_pipeline.sh</code></td><td>Default is 250GB ($$$)</td></tr>
+      <tr><td>BATCH (not streaming)</td><td><code>gcp_batch_main.py</code></td><td>Workers exit when done</td></tr>
+      <tr><td><code>FILE_LOADS</code> writes to BQ</td><td><code>gcp_batch_main.py</code></td><td>FREE vs $0.05/GB streaming inserts</td></tr>
+      <tr><td>Partitioned tables w/ <code>require_partition_filter</code></td><td><code>bq_schema.sql</code></td><td>Accidental full-table-scan queries</td></tr>
+      <tr><td>GCS lifecycle: 7-day TTL</td><td><code>setup.sh</code></td><td>Forgotten files racking up storage cost</td></tr>
+      <tr><td>$25 budget w/ email alerts</td><td><code>setup.sh</code></td><td>You sleep on a job; budget yells</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ───────────────────────── TEARDOWN ───────────────────────── -->
+<section id="teardown">
+  <h2>Teardown — stop all costs <span class="badge b-cost">when done experimenting</span></h2>
+  <p>When you're done playing for the day/week/forever:</p>
+  <pre><button class="copy-btn">Copy</button><code>./gcp/teardown.sh</code></pre>
+  <p>This kills any active Dataflow jobs, deletes the BigQuery dataset, and removes the GCS bucket. Recurring cost drops to <strong>$0</strong>.</p>
+  <div class="callout warn">
+    <strong>Keeps the project alive</strong>
+    Teardown does NOT delete your GCP project. So you can re-run <code>setup.sh</code> later without losing your project ID, IAM grants, or budget alert.
+  </div>
+  <p>If you want to delete the ENTIRE project (true nuclear):</p>
+  <pre><button class="copy-btn">Copy</button><code>gcloud projects delete ${PROJECT_ID}</code></pre>
+</section>
+
+<!-- ───────────────────────── TROUBLESHOOTING ───────────────────────── -->
+<section id="troubleshooting">
+  <h2>Troubleshooting</h2>
+
+  <h4>"Quota exceeded" on Dataflow</h4>
+  <p>New GCP projects have low default quotas. Request a quota increase for "Dataflow CPU quota" in your region. Usually approved in &lt; 1 hour.</p>
+
+  <h4>"Permission denied" on BigQuery</h4>
+  <p>Re-run <code>./gcp/setup.sh</code> — the IAM bindings are idempotent and will re-apply. Wait 60 sec for propagation.</p>
+
+  <h4>Job runs but writes nothing to BigQuery</h4>
+  <p>Check the Dataflow job logs in the Console. Most common cause: the service account can't write to the dataset. Verify with:</p>
+  <pre><button class="copy-btn">Copy</button><code>gcloud projects get-iam-policy ${PROJECT_ID} \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:fraud-pipeline-sa*" \
+  --format="table(bindings.role)"</code></pre>
+
+  <h4>"Module 'pipeline' not found" on workers</h4>
+  <p>Dataflow workers couldn't import your local code. Make sure <code>setup.py</code> exists in the project root (it does — Sweety put one there) and you ran with <code>--setup_file=./setup.py</code> (the trigger script does this).</p>
+
+  <h4>Bill is higher than expected</h4>
+  <p>Check the billing dashboard's <em>"Cost breakdown by SKU"</em>. The usual culprit is a forgotten streaming job. Run teardown.sh immediately and inspect Dataflow → Jobs → filter by "Running".</p>
+</section>
+
+<!-- ───────────────────────── BEYOND ───────────────────────── -->
+<section id="beyond">
+  <h2>Beyond Phase 2 (when you're ready for real-time)</h2>
+  <p>Once batch is comfortable and you have a real production need:</p>
+  <ul>
+    <li><strong>Phase 3 — True streaming:</strong> swap <code>ReadFromText</code> → <code>ReadFromPubSub</code>. Switch to streaming mode. Budget ~$100/mo for a minimum streaming engine setup.</li>
+    <li><strong>Cloud Scheduler:</strong> if you want batch to run on a cron schedule (e.g., every 4 hours), wrap <code>trigger_pipeline.sh</code> in a Cloud Run Job and schedule it.</li>
+    <li><strong>Flex Templates:</strong> package the pipeline as a one-click "Run from console" template for non-engineers.</li>
+    <li><strong>Looker Studio dashboard:</strong> connect to <code>gold_fraud_alerts</code> for a free real-time fraud dashboard.</li>
+    <li><strong>Alerting:</strong> Cloud Functions watching <code>gold_fraud_alerts</code> via Pub/Sub trigger → email/Slack on CRITICAL.</li>
+  </ul>
+
+  <div class="callout info">
+    <strong>Don't skip steps</strong>
+    Master batch first. It teaches you Beam-on-GCP, BigQuery partitioning, IAM, billing — all without burning money. Phase 3 streaming is way easier once Phase 2 is muscle memory.
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+  // Copy buttons
+  document.querySelectorAll('pre').forEach(pre => {
+    const btn = pre.querySelector('.copy-btn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const code = pre.querySelector('code').innerText;
+      navigator.clipboard.writeText(code).then(() => {
+        btn.classList.add('copied'); btn.innerText = '✓ Copied';
+        setTimeout(() => { btn.classList.remove('copied'); btn.innerText = 'Copy'; }, 1500);
+      });
+    });
+  });
+
+  // Scrollspy
+  const links = document.querySelectorAll('#toc a');
+  const sections = [...links].map(a => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  function onScroll() {
+    let activeIdx = 0;
+    const y = window.scrollY + 100;
+    sections.forEach((sec, i) => { if (sec.offsetTop <= y) activeIdx = i; });
+    links.forEach(a => a.classList.remove('active'));
+    if (links[activeIdx]) links[activeIdx].classList.add('active');
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+</script>
+</body>
+</html>
