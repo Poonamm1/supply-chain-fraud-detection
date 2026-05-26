@@ -1,0 +1,48 @@
+# Don't ship junk into the build context (faster builds, smaller images)
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Local venv (we'll rebuild inside container)
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Docs (not needed at runtime — view them locally)
+docs/
+*.md
+!README.md
+
+# Data files (mounted at runtime, not baked in)
+data/
+*.jsonl
+*.csv
+
+# Local environment / IDE
+.env
+.env.local
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# CI/CD configs (not needed at runtime)
+.github/
+.gitlab-ci.yml
+
+# Tests (separate test image if needed)
+tests/
+
+# Local docker-compose state
+docker-compose.override.yml
+
+# Sweety / Code Puppy temp files
+.code-puppy/
