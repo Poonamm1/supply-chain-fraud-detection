@@ -58,6 +58,31 @@
     padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer;
   }
   .copy-btn:hover { background: rgba(255,255,255,.18); }
+
+  /* Status badges */
+  .badge-done, .badge-todo, .badge-now {
+    display:inline-block; padding:2px 10px; border-radius:9999px;
+    font-weight:700; font-size:.7rem; letter-spacing:.05em; margin-left:.5rem;
+    vertical-align: middle;
+  }
+  .badge-done { background:#2a8703; color:#fff; }
+  .badge-todo { background:#e5e7eb; color:#374151; }
+  .badge-now  { background:#ea1100; color:#fff; animation: pulse 2s infinite; }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(234,17,0,.5); }
+    50%     { box-shadow: 0 0 0 8px rgba(234,17,0,0); }
+  }
+  .status-banner {
+    background: linear-gradient(90deg,#fff8e1 0%,#fff8e1 50%,#e8f5e9 100%);
+    border: 1px solid #ffc220;
+    border-radius: 8px; padding: 1rem 1.25rem; margin: 1.5rem 0;
+  }
+  .status-banner h3 { margin:0 0 .5rem 0; font-weight:700; }
+  .status-grid {
+    display:grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+    gap:.5rem; margin-top:.75rem; font-size:.875rem;
+  }
+  .status-grid div { padding:.4rem .6rem; background:rgba(255,255,255,.6); border-radius:6px; }
 </style>
 </head>
 <body class="bg-white">
@@ -87,13 +112,13 @@
       Walkthrough
     </p>
     <nav class="space-y-1.5">
-      <a href="#prereqs"  class="block text-gray-700 hover:text-blue-700">0 · Prerequisites</a>
-      <a href="#step-1"   class="block text-gray-700 hover:text-blue-700">1 · Project & DB Setup</a>
-      <a href="#step-2"   class="block text-gray-700 hover:text-blue-700">2 · Mock Data</a>
-      <a href="#step-3"   class="block text-gray-700 hover:text-blue-700">3 · Schemas & Config</a>
+      <a href="#prereqs"  class="block text-gray-700 hover:text-blue-700">0 · Prerequisites <span style="color:#2a8703">✓</span></a>
+      <a href="#step-1"   class="block text-gray-700 hover:text-blue-700">1 · Project &amp; DB Setup <span style="color:#2a8703">✓</span></a>
+      <a href="#step-2"   class="block text-gray-700 hover:text-blue-700">2 · Mock Data <span style="color:#2a8703">✓</span></a>
+      <a href="#step-3"   class="block text-gray-700 hover:text-blue-700">3 · Schemas &amp; Config <span style="color:#ea1100;font-weight:bold">▶ START HERE</span></a>
       <a href="#step-41"  class="block text-gray-700 hover:text-blue-700">4.1 · Skeleton Pass-Through</a>
       <a href="#step-42"  class="block text-gray-700 hover:text-blue-700">4.2 · Deduplication</a>
-      <a href="#step-43"  class="block text-gray-700 hover:text-blue-700">4.3 · Windows & Velocity</a>
+      <a href="#step-43"  class="block text-gray-700 hover:text-blue-700">4.3 · Windows &amp; Velocity</a>
       <a href="#step-44"  class="block text-gray-700 hover:text-blue-700">4.4 · Side Input + Fallback</a>
       <a href="#step-5"   class="block text-gray-700 hover:text-blue-700">5 · Postgres Sinks</a>
       <a href="#step-6"   class="block text-gray-700 hover:text-blue-700">6 · Verify End-to-End</a>
@@ -104,17 +129,49 @@
   <!-- ================== MAIN CONTENT ================== -->
   <main class="prose max-w-none">
 
+  <!-- ============ STATUS BANNER ============ -->
+  <section class="status-banner">
+    <h3>🐶 Current status — environment is READY, coding starts at Step 3</h3>
+    <p class="text-sm text-gray-700 m-0">
+      Sweety set up the scaffolding for you (venv, libraries, Postgres, mock data,
+      DDL, mock generator). All you need to do is <strong>write the four files in
+      <code class="inline-code">pipeline/</code></strong> by following Steps 3 → 4.4 → 5.
+    </p>
+    <div class="status-grid">
+      <div>✅ <strong>Python 3.12.12</strong> venv at <code class="inline-code">.venv/</code></div>
+      <div>✅ <strong>apache-beam 2.73.0</strong> installed</div>
+      <div>✅ <strong>psycopg2-binary 2.9.10</strong> installed</div>
+      <div>✅ <strong>Faker, dateutil, structlog</strong> installed</div>
+      <div>✅ <strong>Podman</strong> machine running</div>
+      <div>✅ <strong>Postgres 16</strong> container <code class="inline-code">fraud_pg</code> on port <strong>5433</strong></div>
+      <div>✅ <strong>4 tables</strong> created (bronze/silver/gold/baseline)</div>
+      <div>✅ <strong>5 vendor baselines</strong> seeded</div>
+      <div>✅ <strong>Mock data</strong> generator works</div>
+      <div>✅ <strong>DirectRunner</strong> smoke-tested</div>
+      <div>🟡 <strong>pipeline/config.py</strong> &mdash; you write</div>
+      <div>🟡 <strong>pipeline/schemas.py</strong> &mdash; you write</div>
+      <div>🟡 <strong>pipeline/transforms.py</strong> &mdash; you write</div>
+      <div>🟡 <strong>pipeline/main.py</strong> &mdash; you write</div>
+    </div>
+    <p class="text-sm text-gray-700 mt-3 mb-0">
+      <strong>Before each coding session</strong>, run:
+      <code class="inline-code">cd ~/workspace/supply-chain-fraud-detection &amp;&amp; source .venv/bin/activate &amp;&amp; export PG_PORT=5433</code>
+    </p>
+  </section>
+
   <!-- ============ PREREQS ============ -->
   <section id="prereqs">
-    <h2 class="text-2xl font-bold mt-0">0 · Prerequisites</h2>
-    <p>Make sure you have these on your laptop:</p>
-    <ul class="list-disc pl-6">
-      <li>Python 3.10+ (3.11 recommended)</li>
-      <li><code class="inline-code">uv</code> for venv + pip (Walmart standard)</li>
-      <li>Docker Desktop (for the local Postgres)</li>
-      <li>A text editor (VS Code, PyCharm — your pick)</li>
-    </ul>
-    <p>What you should already know <em>before</em> starting:</p>
+    <h2 class="text-2xl font-bold mt-0">0 · Prerequisites <span class="badge-done">DONE</span></h2>
+    <div class="wm-green-border bg-green-50 px-4 py-3 my-3">
+      <strong>✅ Already verified on your machine:</strong>
+      <ul class="list-disc pl-6 mt-1 mb-0">
+        <li>Python 3.12.12 at <code class="inline-code">/opt/homebrew/bin/python3.12</code></li>
+        <li>uv 0.8.4 (Walmart-standard package manager)</li>
+        <li>Podman 5.2.5 with machine running (Docker CLI works transparently)</li>
+        <li>docker compose v5.1.1</li>
+      </ul>
+    </div>
+    <p>What you should already know <em>before</em> starting to code:</p>
     <ul class="list-disc pl-6">
       <li>Basic Python (functions, classes, decorators)</li>
       <li>SQL DDL / DML</li>
@@ -133,13 +190,18 @@
   <!-- ============ STEP 1 ============ -->
   <section id="step-1" class="mt-12">
     <p class="step-pill">SETUP</p>
-    <h2 class="text-2xl font-bold mt-2">1 · Project & Database Setup</h2>
+    <h2 class="text-2xl font-bold mt-2">1 · Project & Database Setup <span class="badge-done">DONE</span></h2>
 
-    <p>The directory scaffold is already in place. From the project root:</p>
-    <div class="copy-wrap"><pre><code># 1. Create a venv (use Walmart proxy for pip)
-uv venv
+    <div class="wm-green-border bg-green-50 px-4 py-3 my-3">
+      <strong>✅ Already done by Sweety</strong> — keeping the commands here so you understand what happened
+      and can re-do them on a fresh machine.
+    </div>
+
+    <p>If you ever need to start from scratch:</p>
+    <div class="copy-wrap"><pre><code># 1. Create a venv (must be Python 3.12 for Beam wheel compatibility)
+uv venv --python /opt/homebrew/bin/python3.12
 source .venv/bin/activate
-uv pip install -r requirements.txt \
+uv pip install --prerelease=allow -r requirements.txt \
   --index-url https://pypi.ci.artifacts.walmart.com/artifactory/api/pypi/external-pypi/simple \
   --allow-insecure-host pypi.ci.artifacts.walmart.com
 
@@ -148,8 +210,20 @@ docker compose up -d
 docker compose exec postgres pg_isready -U fraud_app
 
 # 3. Confirm the four tables exist
-docker compose exec postgres psql -U fraud_app -d fraud_detection \
-    -c "\dt"</code></pre></div>
+docker compose exec postgres psql -U fraud_app -d fraud_detection -c "\dt"</code></pre></div>
+
+    <div class="wm-spark-bg-soft wm-spark-border px-4 py-3 my-3">
+      <strong>🚨 Two gotchas Sweety hit on this machine (for future-you):</strong>
+      <ol class="list-decimal pl-6 mt-1 mb-0">
+        <li><strong>Postgres on port 5433, not 5432</strong> — your machine already had
+            a host Postgres on 5432, so <code class="inline-code">docker-compose.yml</code> maps the container's 5432 to host 5433.
+            <strong>Always <code class="inline-code">export PG_PORT=5433</code></strong> before running anything that hits the DB.</li>
+        <li><strong><code class="inline-code">--prerelease=allow</code> required</strong> — Beam 2.73 pulls in a pre-release
+            <code class="inline-code">envoy-data-plane</code>, so uv refuses to install without the flag.</li>
+        <li><strong>If <code class="inline-code">docker ps</code> errors with "podman.sock not found":</strong>
+            run <code class="inline-code">unset DOCKER_HOST</code> in your current shell, OR open a fresh terminal.</li>
+      </ol>
+    </div>
 
     <div class="wm-blue-border bg-blue-50 px-4 py-3 my-4">
       <strong>Why a Medallion layout?</strong><br/>
@@ -164,7 +238,14 @@ docker compose exec postgres psql -U fraud_app -d fraud_detection \
   <!-- ============ STEP 2 ============ -->
   <section id="step-2" class="mt-12">
     <p class="step-pill">SETUP</p>
-    <h2 class="text-2xl font-bold mt-2">2 · Generate Mock Streaming Data</h2>
+    <h2 class="text-2xl font-bold mt-2">2 · Generate Mock Streaming Data <span class="badge-done">DONE</span></h2>
+
+    <div class="wm-green-border bg-green-50 px-4 py-3 my-3">
+      <strong>✅ Sample data already generated</strong> at <code class="inline-code">data/wms_receiving.jsonl</code>
+      and <code class="inline-code">data/erp_invoices.jsonl</code>. You can regenerate any time with
+      <code class="inline-code">python scripts/generate_mock_data.py</code>.
+    </div>
+
     <p>
       Two JSONL files simulate our future Pub/Sub topics. The generator
       intentionally embeds <em>three fraud signals</em> so you have
@@ -184,15 +265,34 @@ head -n 2 data/erp_invoices.jsonl</code></pre></div>
   <!-- ============ STEP 3 ============ -->
   <section id="step-3" class="mt-12">
     <p class="step-pill">FOUNDATION</p>
-    <h2 class="text-2xl font-bold mt-2">3 · Schemas & Config (write these first)</h2>
+    <h2 class="text-2xl font-bold mt-2">3 · Schemas & Config (write these first) <span class="badge-now">▶ START HERE</span></h2>
 
-    <p>Open <code class="inline-code">pipeline/config.py</code> and define two frozen dataclasses:
-       <code class="inline-code">PostgresConfig</code> (host/port/db/user/password, plus a <code class="inline-code">.dsn</code> property)
-       and <code class="inline-code">PipelineConfig</code> (input paths, window sizes, lateness, dedup TTL, anomaly threshold).
-       Read every value from <code class="inline-code">os.getenv</code> with a sane default — that's the 12-factor way.</p>
+    <div class="wm-red-border bg-red-50 px-4 py-3 my-3">
+      <strong>👉 This is where YOU start coding.</strong> Two files to write,
+      ~80 lines total. Take your time — every later step depends on this.
+    </div>
 
-    <p>Then open <code class="inline-code">pipeline/schemas.py</code> and define two dataclasses for the upstream payloads.
-       <strong>Hash sensitive fields at the boundary</strong> — once it enters a PCollection, raw PII must be gone.</p>
+    <h3 class="font-semibold mt-4">📝 Your task for Step 3</h3>
+    <ol class="list-decimal pl-6">
+      <li>Open <code class="inline-code">pipeline/config.py</code> in your editor (currently a TODO stub).</li>
+      <li>Define a frozen <code class="inline-code">@dataclass</code> <code class="inline-code">PostgresConfig</code> with host/port/db/user/password from <code class="inline-code">os.getenv</code>,
+          plus a <code class="inline-code">.dsn</code> property that returns a libpq-style connection string.
+          <br/><em>Default port must be <strong>5433</strong></em> (remember the gotcha from Step 1).</li>
+      <li>Define a frozen <code class="inline-code">@dataclass</code> <code class="inline-code">PipelineConfig</code> with input paths,
+          window sizes (10 min sliding, 1 min period), allowed lateness (1 hr), dedup TTL (24 hr),
+          anomaly threshold (3.0 sigma), and a nested <code class="inline-code">PostgresConfig</code>.</li>
+      <li>Open <code class="inline-code">pipeline/schemas.py</code> and define two frozen dataclasses:
+          <code class="inline-code">WmsReceivingEvent</code> and <code class="inline-code">ErpInvoiceEvent</code>
+          — each with a <code class="inline-code">from_json(raw)</code> classmethod, an <code class="inline-code">event_time</code> property,
+          and a <code class="inline-code">to_bronze_row()</code> helper.</li>
+      <li><strong>Hash <code class="inline-code">bank_account_details</code> with SHA-256</strong> at parse time — raw PII must never enter a PCollection.</li>
+      <li>Verify your imports work (from project root, with venv active):
+          <div class="copy-wrap"><pre><code>python -c "from pipeline.config import PostgresConfig, PipelineConfig; print('✅ config OK')"
+python -c "from pipeline.schemas import WmsReceivingEvent, ErpInvoiceEvent; print('✅ schemas OK')"</code></pre></div>
+      </li>
+    </ol>
+
+    <h3 class="font-semibold mt-4">Reference snippet (try writing it yourself first!)</h3>
 
     <div class="copy-wrap"><pre><code># pipeline/schemas.py  — reference snippet
 import hashlib, json, uuid
@@ -244,7 +344,7 @@ class ErpInvoiceEvent:
   <!-- ============ STEP 4.1 ============ -->
   <section id="step-41" class="mt-12">
     <p class="step-pill">STEP 4.1</p>
-    <h2 class="text-2xl font-bold mt-2">4.1 · Skeleton Pass-Through</h2>
+    <h2 class="text-2xl font-bold mt-2">4.1 · Skeleton Pass-Through <span class="badge-todo">TODO</span></h2>
 
     <div class="wm-green-border bg-green-50 px-4 py-3">
       <strong>Goal:</strong> prove that Beam can read your JSONL files, parse them,
@@ -332,7 +432,7 @@ if __name__ == "__main__":
   <!-- ============ STEP 4.2 ============ -->
   <section id="step-42" class="mt-12">
     <p class="step-pill">STEP 4.2</p>
-    <h2 class="text-2xl font-bold mt-2">4.2 · Stateful Deduplication</h2>
+    <h2 class="text-2xl font-bold mt-2">4.2 · Stateful Deduplication <span class="badge-todo">TODO</span></h2>
 
     <div class="wm-green-border bg-green-50 px-4 py-3">
       <strong>Goal:</strong> any <code class="inline-code">invoice_id</code> seen before in the last 24 hours must be silently dropped.
@@ -420,7 +520,7 @@ deduped["duplicates"] | "PrintDup"    >> beam.Map(lambda e: print("DUP :", e.inv
   <!-- ============ STEP 4.3 ============ -->
   <section id="step-43" class="mt-12">
     <p class="step-pill">STEP 4.3</p>
-    <h2 class="text-2xl font-bold mt-2">4.3 · Time Elements + Sliding Window Velocity</h2>
+    <h2 class="text-2xl font-bold mt-2">4.3 · Time Elements + Sliding Window Velocity <span class="badge-todo">TODO</span></h2>
 
     <div class="wm-green-border bg-green-50 px-4 py-3">
       <strong>Goal:</strong> if a vendor emits ≥3 identical invoice amounts inside a
@@ -504,7 +604,7 @@ velocity_alerts | "PrintAlerts" >> beam.Map(lambda a: print("ALERT:", a))</code>
   <!-- ============ STEP 4.4 ============ -->
   <section id="step-44" class="mt-12">
     <p class="step-pill">STEP 4.4</p>
-    <h2 class="text-2xl font-bold mt-2">4.4 · Side Input Enrichment + Defensive Fallback</h2>
+    <h2 class="text-2xl font-bold mt-2">4.4 · Side Input Enrichment + Defensive Fallback <span class="badge-todo">TODO</span></h2>
 
     <div class="wm-green-border bg-green-50 px-4 py-3">
       <strong>Goal:</strong> score every invoice against its vendor's 90-day baseline.
@@ -628,7 +728,7 @@ docker compose start postgres</code></pre></div>
   <!-- ============ STEP 5 ============ -->
   <section id="step-5" class="mt-12">
     <p class="step-pill">STEP 5</p>
-    <h2 class="text-2xl font-bold mt-2">5 · Persist to Postgres (replace the <code class="inline-code">print</code>s)</h2>
+    <h2 class="text-2xl font-bold mt-2">5 · Persist to Postgres (replace the <code class="inline-code">print</code>s) <span class="badge-todo">TODO</span></h2>
 
     <p>Now swap the debug <code class="inline-code">print</code>s for real sinks. The pattern: one base
        class that batches inserts via <code class="inline-code">psycopg2.extras.execute_values</code>, three
@@ -686,7 +786,7 @@ class WriteGoldAlert(_BatchedPostgresWriter):
   <!-- ============ STEP 6 ============ -->
   <section id="step-6" class="mt-12">
     <p class="step-pill">STEP 6</p>
-    <h2 class="text-2xl font-bold mt-2">6 · Verify End-to-End</h2>
+    <h2 class="text-2xl font-bold mt-2">6 · Verify End-to-End <span class="badge-todo">TODO</span></h2>
     <div class="copy-wrap"><pre><code># Wipe + regenerate + run
 docker compose exec postgres psql -U fraud_app -d fraud_detection \
     -c "TRUNCATE gold_fraud_alerts, silver_deduplicated_invoices, bronze_raw_events;"
