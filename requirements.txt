@@ -1,27 +1,23 @@
 # =============================================================================
 # Supply Chain Fraud Detection — Phase 1 (Local DirectRunner)
 # =============================================================================
-# Pin only major/minor; allow patch upgrades so we still get CVE fixes.
-# For prod Dataflow we'd freeze a lockfile with `uv pip compile`.
-# -----------------------------------------------------------------------------
 
-# Core stream-processing engine
-apache-beam[gcp]==2.59.0          # GCP extras give us GCS/PubSub IO for free
-                                  # in Phase 2 without re-installing.
+# Core stream-processing engine. Phase 1 is local-only so we skip the
+# [gcp] extras (Pub/Sub, BigQuery IO) — add them back in Phase 2.
+apache-beam==2.73.0
 
-# Postgres driver (binary wheel — no libpq compile dance locally)
-psycopg2-binary==2.9.9
+# Postgres driver (binary wheel — no libpq compile dance)
+psycopg2-binary==2.9.10
 
-# Mock data generation (used by scripts/generate_mock_data.py only)
+# Mock data generation
 Faker==30.3.0
 
-# Timestamp parsing helpers — Beam already pulls this, but we depend on it
-# directly in transforms.py so we declare it explicitly (PEP 20: explicit > implicit).
+# Timestamp parsing
 python-dateutil==2.9.0
 
-# Structured logging — nicer than the stdlib defaults for observability
+# Structured logging
 structlog==24.4.0
 
-# Test stack (only needed for `make test`)
+# Test stack
 pytest==8.3.3
 pytest-mock==3.14.0
