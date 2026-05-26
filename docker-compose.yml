@@ -1,0 +1,22 @@
+# Local Postgres for Phase 1. `docker compose up -d` and you're off.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fraud_pg
+    environment:
+      POSTGRES_USER:     fraud_app
+      POSTGRES_PASSWORD: fraud_app
+      POSTGRES_DB:       fraud_detection
+    ports:
+      - "5432:5432"
+    volumes:
+      - fraud_pg_data:/var/lib/postgresql/data
+      - ./db/init_tables.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fraud_app -d fraud_detection"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  fraud_pg_data:

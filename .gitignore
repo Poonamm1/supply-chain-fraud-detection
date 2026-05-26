@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Beam / Dataflow scratch
+.beam_temp/
+*.avro
+*.parquet
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Logs & local runtime artifacts
+logs/
+*.log
+
+# Generated mock streams — regenerate via scripts/generate_mock_data.py
+data/*.jsonl
+
+# Test/coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# PII guard — never commit anything that *might* contain real vendor data
+*_pii.*
+*ssn*
+*hipaa*
