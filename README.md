@@ -31,11 +31,9 @@ warehouse + ERP stream. Phase 1 runs **entirely on your laptop** via the
 ## Quick start
 
 ```bash
-# 0. Create venv (Walmart proxy-aware)
+# 0. Create venv
 uv venv && source .venv/bin/activate
-uv pip install -r requirements.txt \
-  --index-url https://pypi.ci.artifacts.walmart.com/artifactory/api/pypi/external-pypi/simple \
-  --allow-insecure-host pypi.ci.artifacts.walmart.com
+uv pip install -r requirements.txt
 
 # 1. Start Postgres + auto-apply DDL
 docker compose up -d

@@ -1,0 +1,12 @@
+# =============================================================================
+# Slim requirements for the Dataflow Flex Template image.
+# =============================================================================
+# Only includes what gcp_batch_main.py actually imports.
+# Excludes:
+#   * psycopg2-binary  — only used by pipeline/main.py (local DirectRunner)
+#   * Faker            — only used by scripts/generate_mock_data.py
+#   * pytest, pytest-mock — test-only
+# =============================================================================
+apache-beam[gcp]==2.73.0
+python-dateutil==2.9.0
+structlog==24.4.0

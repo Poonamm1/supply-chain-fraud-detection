@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fix VPC SC on poonammaurya20-org · Checklist</title>
+<style>
+  :root{--blue:#0053e2;--blue-130:#002a93;--spark:#ffc220;--spark-10:#fff4d6;--spark-140:#995213;--red:#ea1100;--green:#2a8703;--gray-160:#1c1c1c;--gray-100:#5a5a5a;--gray-50:#bfbfbf;--gray-10:#f2f2f2;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--gray-160);max-width:900px;margin:0 auto;padding:32px 28px;}
+  header{background:var(--blue);color:#fff;padding:24px 28px;border-radius:8px;border-bottom:4px solid var(--spark);margin-bottom:28px;}
+  header h1{font-size:24px;margin-bottom:6px;}
+  h2{font-size:20px;color:var(--blue-130);margin:30px 0 12px;border-left:5px solid var(--spark);padding-left:14px;}
+  h3{font-size:16px;margin:18px 0 8px;color:var(--blue-130);}
+  p{margin-bottom:12px;}
+  code{background:var(--gray-10);padding:2px 6px;border-radius:3px;font-family:"SF Mono",Menlo,monospace;font-size:.92em;color:#b3146e;}
+  pre{background:#1e1e1e;color:#e6e6e6;padding:14px 16px;border-radius:6px;overflow-x:auto;font:13px/1.5 "SF Mono",Menlo,monospace;margin:8px 0 14px;}
+  .step{background:#fff;border:1px solid var(--gray-50);border-left:5px solid var(--blue);padding:18px 22px;margin:14px 0;border-radius:0 6px 6px 0;}
+  .step h3{margin-top:0;color:var(--blue);}
+  .step .num{display:inline-block;width:30px;height:30px;background:var(--blue);color:#fff;border-radius:50%;text-align:center;line-height:30px;margin-right:10px;font-weight:700;}
+  .link-btn{display:inline-block;background:var(--spark);color:var(--spark-140);padding:9px 18px;border-radius:4px;text-decoration:none;font-weight:700;margin:8px 6px 8px 0;border:2px solid var(--spark-140);}
+  .link-btn:hover{background:var(--spark-140);color:var(--spark);}
+  .callout{padding:14px 16px;border-left:4px solid;border-radius:0 4px 4px 0;margin:14px 0;}
+  .info{background:#e6f0ff;border-color:var(--blue);}
+  .warn{background:var(--spark-10);border-color:var(--spark);}
+  .ok{background:#e8f5e0;border-color:var(--green);}
+  .callout strong{display:block;margin-bottom:4px;font-size:13px;text-transform:uppercase;letter-spacing:.4px;}
+  ul,ol{margin:0 0 14px 22px;}
+  li{margin-bottom:6px;}
+  table{width:100%;border-collapse:collapse;margin:8px 0 14px;font-size:13.5px;}
+  th,td{padding:8px 10px;border:1px solid var(--gray-50);text-align:left;vertical-align:top;}
+  th{background:var(--blue);color:#fff;}
+  tr:nth-child(even) td{background:var(--gray-10);}
+  .check{font-size:14px;line-height:1.8;}
+  .check li{list-style:none;padding-left:22px;text-indent:-22px;}
+  .check li::before{content:"☐ ";color:var(--blue);font-weight:700;margin-right:6px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔓 Fix VPC SC on <code style="background:rgba(255,255,255,.2);color:#fff;">poonammaurya20-org</code></h1>
+  <p>Your fresh Cloud Identity org has security defaults blocking everything. Here's the 10-min click-fix.</p>
+</header>
+
+<div class="callout warn">
+  <strong>The situation</strong>
+  You created the org today (2026-05-26 03:02 UTC). Google enabled <strong>VPC Service Controls</strong> + maybe some Org Policies by default. They're blocking GCS, BigQuery, Dataflow — basically everything except "describe" reads.
+  <br><br>
+  CLI can't fix this (because CLI itself is blocked). <strong>Console UI works</strong> because Google bypasses VPC SC for org-admin management ops.
+</div>
+
+<h2>The 3-step click fix</h2>
+
+<div class="step">
+  <h3><span class="num">1</span>Delete VPC Service Control perimeter</h3>
+  <p>This is the main blocker. Open:</p>
+  <a class="link-btn" href="https://console.cloud.google.com/security/service-perimeter?organizationId=836356231213" target="_blank">🔗 Open VPC Service Controls</a>
+  <p><strong>What to do:</strong></p>
+  <ul>
+    <li>You'll see a list of <strong>Service Perimeters</strong></li>
+    <li>For each one: click the perimeter name → top right click <strong>"Delete"</strong> → confirm</li>
+    <li>If there are <strong>Access Policies</strong> on the left nav, you can delete those too (optional — just removes the container)</li>
+  </ul>
+  <p>⚠️ If you don't see any perimeters listed, the issue is in <strong>Org Policies</strong> (step 2). Both can apply.</p>
+</div>
+
+<div class="step">
+  <h3><span class="num">2</span>Turn off restrictive Org Policies</h3>
+  <a class="link-btn" href="https://console.cloud.google.com/iam-admin/orgpolicies?organizationId=836356231213" target="_blank">🔗 Open Organization Policies</a>
+  <p><strong>What to look for (in the search box, type each):</strong></p>
+  <table>
+    <thead><tr><th>Search term</th><th>If found and "Enforced" → toggle to</th></tr></thead>
+    <tbody>
+      <tr><td><code>restrictNonAllowedGoogleLoadBalancerSslCertificates</code></td><td>Not enforced</td></tr>
+      <tr><td><code>iam.allowedPolicyMemberDomains</code></td><td>Allow all</td></tr>
+      <tr><td><code>storage.uniformBucketLevelAccess</code></td><td>Not enforced</td></tr>
+      <tr><td><code>storage.publicAccessPrevention</code></td><td>Not enforced</td></tr>
+      <tr><td><code>compute.requireOsLogin</code></td><td>Not enforced</td></tr>
+      <tr><td><code>compute.vmExternalIpAccess</code></td><td>Allow all</td></tr>
+      <tr><td>Anything with <strong>"vpc"</strong> or <strong>"perimeter"</strong></td><td>Not enforced</td></tr>
+    </tbody>
+  </table>
+  <p>For each: click the policy → top right <strong>"Manage policy"</strong> → toggle to <strong>"Not enforced"</strong> (or "Allow all") → Save.</p>
+</div>
+
+<div class="step">
+  <h3><span class="num">3</span>Verify the fix works</h3>
+  <p>Come back to the terminal and run:</p>
+  <pre>gsutil mb -p gen-lang-client-0050631208 -l us-central1 gs://test-after-fix-$(date +%s)</pre>
+  <p><strong>Two possible outcomes:</strong></p>
+  <div class="callout ok">
+    <strong>✅ Bucket created (no 403)</strong>
+    YOU FIXED IT! Tell Sweety and we deploy immediately.
+  </div>
+  <div class="callout warn">
+    <strong>⚠️ Still 403</strong>
+    Either you missed a policy (go back to steps 1+2), OR there's a propagation delay (wait 2 minutes and try again — IAM changes take 60-120 seconds to propagate org-wide).
+  </div>
+</div>
+
+<h2>Plan B: If you can't find any policies to disable</h2>
+<p>Sometimes the "default secure" toggle on Cloud Identity Free is buried in different places. Try also:</p>
+<ul>
+  <li>Search <code>console.cloud.google.com</code> for "VPC Service Controls" → top result</li>
+  <li>Search for "Access Context Manager" → check for any policies</li>
+  <li>Check <strong>Security Command Center</strong> if it's enabled (sometimes the source)</li>
+  <li>IAM &amp; Admin → <strong>Settings</strong> → check for any "Restrict resource locations" toggle</li>
+</ul>
+
+<h2>Plan C: Nuke the org and start clean</h2>
+<p>If you can't find the policy or it won't disable:</p>
+<ol>
+  <li>Go to <a href="https://admin.google.com" target="_blank">admin.google.com</a> (sign in as poonammaurya20@gmail.com)</li>
+  <li>Account → Account settings → <strong>Cancel Subscription / Delete account</strong></li>
+  <li>Wait 24-48 hrs for org to dissolve</li>
+  <li>Create a new project — it'll be org-free</li>
+</ol>
+
+<h2>Plan D: Use the other Gmail (fastest)</h2>
+<p><code>poonam4maurya@gmail.com</code> probably has no Cloud Identity yet. In incognito → console.cloud.google.com → sign in with that Gmail → create project → make sure NOT to enable Cloud Identity / Workspace when prompted.</p>
+
+<h2>Reference: What we've already verified</h2>
+<table>
+  <thead><tr><th>Check</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>You're org admin on poonammaurya20-org</td><td>✅ Yes (resourcemanager.organizationAdmin)</td></tr>
+    <tr><td>Org created today</td><td>✅ 2026-05-26 03:02:37 UTC</td></tr>
+    <tr><td>Billing account works</td><td>✅ 01B147-920C1E-02DCD3</td></tr>
+    <tr><td>VPC SC blocks bucket creation</td><td>❌ 403 on every project under this org</td></tr>
+    <tr><td>VPC SC blocks reading the policy (CLI)</td><td>❌ Timeout on access-context-manager + org-policies list</td></tr>
+    <tr><td>Console UI can manage the policy</td><td>✅ Should work (you're admin, console bypasses VPC SC for mgmt)</td></tr>
+  </tbody>
+</table>
+
+<div class="callout info" style="margin-top:30px;">
+  <strong>When you're done</strong>
+  Come back to Sweety in the terminal and run the verification command. We'll deploy your fraud detection pipeline to GCP in about 5 minutes once the VPC SC is gone. 🐶
+</div>
+
+</body>
+</html>

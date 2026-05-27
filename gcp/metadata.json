@@ -1,0 +1,62 @@
+{
+  "name": "Supply Chain Fraud Detection",
+  "description": "Batch Apache Beam pipeline that ingests WMS + ERP JSONL events from GCS and writes bronze/silver/gold tables to BigQuery, with velocity + anomaly fraud detection.",
+  "parameters": [
+    {
+      "name": "wms_input",
+      "label": "WMS input JSONL path",
+      "helpText": "GCS path to the WMS receiving events file. Example: gs://my-bucket/wms_receiving.jsonl",
+      "regexes": ["^gs:\\/\\/[^\\n\\r]+$"],
+      "paramType": "GCS_READ_FILE"
+    },
+    {
+      "name": "erp_input",
+      "label": "ERP input JSONL path",
+      "helpText": "GCS path to the ERP invoices file. Example: gs://my-bucket/erp_invoices.jsonl",
+      "regexes": ["^gs:\\/\\/[^\\n\\r]+$"],
+      "paramType": "GCS_READ_FILE"
+    },
+    {
+      "name": "bq_dataset",
+      "label": "BigQuery dataset (project:dataset)",
+      "helpText": "Fully qualified target dataset. Example: fraud-detect-260526-1750:fraud_detection",
+      "regexes": ["^[a-z0-9-]+:[A-Za-z0-9_]+$"],
+      "paramType": "TEXT"
+    },
+    {
+      "name": "dedup_ttl_seconds",
+      "label": "Dedup TTL (seconds)",
+      "helpText": "How long the stateful dedup DoFn remembers seen invoice_ids. Default 3600.",
+      "isOptional": true,
+      "paramType": "TEXT"
+    },
+    {
+      "name": "velocity_window_seconds",
+      "label": "Velocity window (seconds)",
+      "helpText": "Sliding window size for the velocity rule. Default 600 (10 min).",
+      "isOptional": true,
+      "paramType": "TEXT"
+    },
+    {
+      "name": "velocity_period_seconds",
+      "label": "Velocity period (seconds)",
+      "helpText": "Sliding window advance period. Default 60.",
+      "isOptional": true,
+      "paramType": "TEXT"
+    },
+    {
+      "name": "allowed_lateness_seconds",
+      "label": "Allowed lateness (seconds)",
+      "helpText": "Max event-time lateness tolerated. Default 3600.",
+      "isOptional": true,
+      "paramType": "TEXT"
+    },
+    {
+      "name": "anomaly_stddev_threshold",
+      "label": "Anomaly z-score threshold",
+      "helpText": "Standard deviations above the vendor baseline to fire ANOMALY alert. Default 3.0.",
+      "isOptional": true,
+      "paramType": "TEXT"
+    }
+  ]
+}

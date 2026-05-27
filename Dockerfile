@@ -12,11 +12,12 @@
 ARG PYTHON_VERSION=3.12-slim-bookworm
 FROM python:${PYTHON_VERSION}
 
-# Walmart internal PyPI mirror is reachable from the corporate network when
-# pypi.org is firewalled. Override at build time with:
-#   docker build --build-arg PYPI_INDEX_URL=https://pypi.org/simple ...
-ARG PYPI_INDEX_URL=https://pypi.ci.artifacts.walmart.com/artifactory/api/pypi/external-pypi/simple
-ARG PYPI_TRUSTED_HOST=pypi.ci.artifacts.walmart.com
+# Defaults to public pypi.org. If you're behind a corp firewall, override at
+# build time with:
+#   docker build --build-arg PYPI_INDEX_URL=https://your-mirror/simple \
+#                --build-arg PYPI_TRUSTED_HOST=your-mirror ...
+ARG PYPI_INDEX_URL=https://pypi.org/simple
+ARG PYPI_TRUSTED_HOST=pypi.org
 
 LABEL org.opencontainers.image.title="supply-chain-fraud-detection" \
       org.opencontainers.image.description="Apache Beam fraud detection pipeline" \
@@ -40,6 +41,11 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip install --upgrade --index-url "${PYPI_INDEX_URL}" --trusted-host "${PYPI_TRUSTED_HOST}" pip setuptools wheel && \
     pip install --index-url "${PYPI_INDEX_URL}" --trusted-host "${PYPI_TRUSTED_HOST}" -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
+
+# OFFLINE FALLBACK: if neither pypi.org nor a mirror is reachable, drop wheels
+# into ./wheelhouse/ and uncomment the next line (and comment out the RUN above).
+# COPY wheelhouse/ /tmp/wheelhouse/
+# RUN pip install --no-index --find-links=/tmp/wheelhouse -r /tmp/requirements.txt
 
 # Application source — copied with proper ownership
 COPY --chown=pipeline:pipeline pipeline/  ./pipeline/
