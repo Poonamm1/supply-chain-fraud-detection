@@ -56,7 +56,7 @@ gcloud dataflow flex-template run "${JOB_NAME}" \
     --staging-location "gs://${TEMPLATE_BUCKET}/staging" \
     --max-workers 2 \
     --worker-machine-type e2-small \
-    --disk-size-gb 25 \
+#    --disk-size-gb 25 \
     --parameters "wms_input=${WMS_INPUT}" \
     --parameters "erp_input=${ERP_INPUT}" \
     --parameters "bq_dataset=${PROJECT_ID}:${DATASET}"
