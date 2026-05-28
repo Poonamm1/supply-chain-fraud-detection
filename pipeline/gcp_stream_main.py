@@ -33,6 +33,7 @@ from pipeline.transforms import (
     AssignEventTimestamp,
     DeduplicateInvoices,
     ParseErpLine,
+    ParseWmsLine,
     VelocityFraudCheck,
     event_to_bronze_row,
 )
@@ -157,6 +158,8 @@ def load_baseline_from_bq(project: str, dataset_fqn: str) -> dict:
 # ─── pipeline wiring ────────────────────────────────────────────────────
 def build_argparser():
     p = argparse.ArgumentParser()
+    p.add_argument("--wms_subscription", required=True, 
+                   help="Pub/Sub subscription path: projects/PROJECT/subscriptions/SUB")
     p.add_argument("--erp_subscription", required=True, 
                    help="Pub/Sub subscription path: projects/PROJECT/subscriptions/SUB")
     p.add_argument("--bq_dataset", required=True, help="project:dataset")
@@ -188,10 +191,26 @@ def run(argv=None) -> None:
     with beam.Pipeline(options=opts) as p:
         baseline_si = p | "BaselineSI" >> beam.Create([baseline_dict])
 
+        # WMS stream from Pub/Sub
+        wms_raw = (
+            p
+            | "ReadPubSubWMS" >> ReadFromPubSub(
+                subscription=known_args.wms_subscription,
+                with_attributes=False
+            )
+        )
+
+        wms = (
+            wms_raw
+            | "DecodePubSubWMS" >> beam.Map(lambda msg: msg.decode("utf-8"))
+            | "ParseWms" >> beam.ParDo(ParseWmsLine())
+                              .with_outputs(ParseWmsLine.DEAD_LETTER, main="ok")
+        )
+
         # ERP stream from Pub/Sub
         erp_raw = (
             p
-            | "ReadPubSub" >> ReadFromPubSub(
+            | "ReadPubSubERP" >> ReadFromPubSub(
                 subscription=known_args.erp_subscription,
                 with_attributes=False
             )
@@ -199,14 +218,15 @@ def run(argv=None) -> None:
 
         erp = (
             erp_raw
-            | "DecodePubSub" >> beam.Map(lambda msg: msg.decode("utf-8"))
+            | "DecodePubSubERP" >> beam.Map(lambda msg: msg.decode("utf-8"))
             | "ParseErp" >> beam.ParDo(ParseErpLine())
                               .with_outputs(ParseErpLine.DEAD_LETTER, main="ok")
         )
 
-        # BRONZE — all raw events
+        # BRONZE — all raw events from both WMS and ERP
         (
-            erp["ok"]
+            (wms["ok"], erp["ok"])
+            | "FlatBronze"   >> beam.Flatten()
             | "ToBronzeDict" >> beam.Map(event_to_bronze_row)
             | "FmtBronze"    >> beam.Map(bronze_row)
             | "WriteBronze"  >> WriteToBigQuery(
@@ -214,8 +234,8 @@ def run(argv=None) -> None:
                 schema=BRONZE_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,
                 create_disposition=BigQueryDisposition.CREATE_NEVER,
-                # Streaming uses STREAMING_INSERTS by default (not FILE_LOADS)
             )
+        )
         )
 
         # SILVER — stateful dedup + write

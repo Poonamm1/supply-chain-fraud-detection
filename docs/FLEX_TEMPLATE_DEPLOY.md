@@ -279,23 +279,93 @@ Expected: a handful of `VELOCITY` / `ANOMALY` / `FALLBACK` alerts.
 
 If you want **real-time fraud detection** from Pub/Sub instead of batch GCS files:
 
-### 9a. Create Pub/Sub Topic and Subscription
+### 9a. Create Pub/Sub Topics and Subscriptions
+
+**Topics**:
+- `wms-events-topic` - WMS warehouse receiving events
+- `erp-events-topic` - ERP invoice events  
+- `fraud-dead-letter-topic` - Dead-letter queue for failed messages
+
+**Subscriptions** (with DLQ):
+- `wms-events-sub` - Reads from WMS topic (max 5 delivery attempts, then→DLQ)
+- `erp-events-sub` - Reads from ERP topic (max 5 delivery attempts, then→DLQ)
+
+### Via Console:
+
+1. Navigate to: **Pub/Sub → Topics**
+   ```
+   https://console.cloud.google.com/cloudpubsub/topic/list?project=fraud-detect-260526-1750
+   ```
+
+2. Create **THREE** topics:
+   - Topic ID: `fraud-dead-letter-topic` (create this FIRST)
+     - Message retention: `7 days`
+   - Topic ID: `wms-events-topic`
+     - Message retention: `1 day`
+   - Topic ID: `erp-events-topic`
+     - Message retention: `1 day`
+
+3. Navigate to: **Pub/Sub → Subscriptions**
+   ```
+   https://console.cloud.google.com/cloudpubsub/subscription/list?project=fraud-detect-260526-1750
+   ```
+
+4. Create WMS subscription:
+   - Subscription ID: `wms-events-sub`
+   - Topic: `wms-events-topic`
+   - Delivery type: Pull
+   - Acknowledgement deadline: `60 seconds`
+   - Message retention: `1 day`
+   - **Dead lettering**: ENABLE
+     - Dead letter topic: `fraud-dead-letter-topic`
+     - Maximum delivery attempts: `5`
+
+5. Create ERP subscription:
+   - Subscription ID: `erp-events-sub`
+   - Topic: `erp-events-topic`
+   - Delivery type: Pull
+   - Acknowledgement deadline: `60 seconds`
+   - Message retention: `1 day`
+   - **Dead lettering**: ENABLE
+     - Dead letter topic: `fraud-dead-letter-topic`
+     - Maximum delivery attempts: `5`
+
+### Via gcloud CLI (faster):
 
 ```bash
-export TOPIC_NAME=erp-invoices
-export SUBSCRIPTION_NAME=erp-invoices-sub
+export PROJECT_ID=fraud-detect-260526-1750
 
-# Create topic
-gcloud pubsub topics create ${TOPIC_NAME} \
+# Create dead-letter topic FIRST
+gcloud pubsub topics create fraud-dead-letter-topic \
+    --project=${PROJECT_ID} \
+    --message-retention-duration=7d
+
+# Create WMS and ERP topics
+gcloud pubsub topics create wms-events-topic \
     --project=${PROJECT_ID} \
     --message-retention-duration=1d
 
-# Create subscription
-gcloud pubsub subscriptions create ${SUBSCRIPTION_NAME} \
-    --topic=${TOPIC_NAME} \
+gcloud pubsub topics create erp-events-topic \
+    --project=${PROJECT_ID} \
+    --message-retention-duration=1d
+
+# Create WMS subscription with DLQ
+gcloud pubsub subscriptions create wms-events-sub \
+    --topic=wms-events-topic \
     --project=${PROJECT_ID} \
     --ack-deadline=60 \
-    --message-retention-duration=1d
+    --message-retention-duration=1d \
+    --dead-letter-topic=projects/${PROJECT_ID}/topics/fraud-dead-letter-topic \
+    --max-delivery-attempts=5
+
+# Create ERP subscription with DLQ
+gcloud pubsub subscriptions create erp-events-sub \
+    --topic=erp-events-topic \
+    --project=${PROJECT_ID} \
+    --ack-deadline=60 \
+    --message-retention-duration=1d \
+    --dead-letter-topic=projects/${PROJECT_ID}/topics/fraud-dead-letter-topic \
+    --max-delivery-attempts=5
 ```
 
 **OR** use the automated script:
@@ -306,14 +376,22 @@ gcloud pubsub subscriptions create ${SUBSCRIPTION_NAME} \
 ### 9b. Grant Pub/Sub Permissions to Service Account
 
 ```bash
+# Grant Pub/Sub Subscriber role (read from subscriptions)
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/pubsub.subscriber" \
     --condition=None
 
+# Grant Pub/Sub Viewer role (list subscriptions)
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/pubsub.viewer" \
+    --condition=None
+
+# Grant Pub/Sub Publisher role (publish to DLQ topic)
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/pubsub.publisher" \
     --condition=None
 ```
 
@@ -321,17 +399,25 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 
 ```bash
 # Generate test fraud data
-python scripts/generate_mock_data.py --num-invoices 20
+python scripts/generate_mock_data.py --num-invoices 20 --num-wms 20
 
-# Publish each invoice as a separate message
+# Publish WMS messages
 while IFS= read -r line; do
-    echo "${line}" | gcloud pubsub topics publish ${TOPIC_NAME} \
+    echo "${line}" | gcloud pubsub topics publish wms-events-topic \
+        --project=${PROJECT_ID} \
+        --message=- >/dev/null 2>&1
+    sleep 0.1
+done < data/wms_receiving.jsonl
+
+# Publish ERP messages
+while IFS= read -r line; do
+    echo "${line}" | gcloud pubsub topics publish erp-events-topic \
         --project=${PROJECT_ID} \
         --message=- >/dev/null 2>&1
     sleep 0.1
 done < data/erp_invoices.jsonl
 
-echo "✅ Published 20 test messages to Pub/Sub"
+echo "✅ Published 20 WMS + 20 ERP test messages to Pub/Sub"
 ```
 
 **OR** use the automated script:

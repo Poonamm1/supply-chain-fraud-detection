@@ -21,20 +21,22 @@ SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-raud-detection-sa@${PROJECT_ID}.iam.gservice
 STAGING_LOCATION="${STAGING_LOCATION:-gs://temp_staging_fraud_detection/staging}"
 TEMP_LOCATION="${TEMP_LOCATION:-gs://temp_staging_fraud_detection/temp}"
 
-# Pub/Sub subscription (must exist before running)
-ERP_SUBSCRIPTION="${ERP_SUBSCRIPTION:-projects/${PROJECT_ID}/subscriptions/erp-invoices-sub}"
+# Pub/Sub subscriptions (updated names)
+WMS_SUBSCRIPTION="${WMS_SUBSCRIPTION:-projects/${PROJECT_ID}/subscriptions/wms-events-sub}"
+ERP_SUBSCRIPTION="${ERP_SUBSCRIPTION:-projects/${PROJECT_ID}/subscriptions/erp-events-sub}"
 
 JOB_NAME="fraud-stream-$(date +%Y%m%d-%H%M%S)"
 
 echo "════════════════════════════════════════════════════════════════════════"
 echo " Launching Streaming Dataflow Job"
 echo "════════════════════════════════════════════════════════════════════════"
-echo " Project:         ${PROJECT_ID}"
-echo " Region:          ${REGION}"
-echo " Job Name:        ${JOB_NAME}"
-echo " Subscription:    ${ERP_SUBSCRIPTION}"
-echo " BQ Dataset:      ${BQ_DATASET}"
-echo " Service Account: ${SERVICE_ACCOUNT}"
+echo " Project:          ${PROJECT_ID}"
+echo " Region:           ${REGION}"
+echo " Job Name:         ${JOB_NAME}"
+echo " WMS Subscription: ${WMS_SUBSCRIPTION}"
+echo " ERP Subscription: ${ERP_SUBSCRIPTION}"
+echo " BQ Dataset:       ${BQ_DATASET}"
+echo " Service Account:  ${SERVICE_ACCOUNT}"
 echo "════════════════════════════════════════════════════════════════════════"
 echo ""
 
@@ -53,6 +55,7 @@ python pipeline/gcp_stream_main.py \
   --staging_location="${STAGING_LOCATION}" \
   --temp_location="${TEMP_LOCATION}" \
   --service_account_email="${SERVICE_ACCOUNT}" \
+  --wms_subscription="${WMS_SUBSCRIPTION}" \
   --erp_subscription="${ERP_SUBSCRIPTION}" \
   --bq_dataset="${BQ_DATASET}" \
   --machine_type=e2-small \
