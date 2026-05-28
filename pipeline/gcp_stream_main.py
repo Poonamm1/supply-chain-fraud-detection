@@ -1,19 +1,16 @@
 """
-pipeline.gcp_batch_main — GCP variant of the Phase 1 pipeline.
-==============================================================
-Identical fraud-detection logic to pipeline.main, but:
-    * Reads from GCS instead of local files
-    * Writes to BigQuery instead of PostgreSQL
-    * Runs as a BATCH job on Dataflow (exits when done -> no idle bills)
-    * Loads vendor baseline from BigQuery (one-shot at job start)
+pipeline.gcp_stream_main — Streaming variant using Pub/Sub
+============================================================
+Reads ERP invoice events from Pub/Sub, applies the SAME fraud detection
+transforms as gcp_batch_main.py, and writes to BigQuery bronze/silver/gold.
 
-Run via gcp/trigger_pipeline.sh — never invoke directly in production.
+Key differences from batch mode:
+    * Source: ReadFromPubSub instead of ReadFromText (GCS)
+    * Windowing: Uses event-time windowing for velocity detection
+    * Triggers: Auto-triggers for continuous output
+    * Stopping: Run until manually cancelled (gcloud dataflow jobs cancel)
 
-Cost model:
-    * Dataflow batch on e2-small with max_num_workers=2:
-        ~$0.05 - $0.10 per run for our row volumes
-    * BigQuery load jobs: FREE (vs $0.05/GB for streaming inserts)
-    * GCS lifecycle deletes inputs after 7 days
+Run via gcp/run_stream_template.sh — never invoke directly in production.
 """
 import argparse
 import json
@@ -21,24 +18,21 @@ import logging
 import os
 import sys
 
-# Bootstrap: when Dataflow runs this script directly (not via `python -m`),
-# the parent directory isn't on sys.path. Fix it so `from pipeline.transforms`
-# works. This ONLY runs when __package__ is None (i.e., direct execution).
+# Bootstrap sys.path for Flex Template execution
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import apache_beam as beam
 from apache_beam.io.gcp.bigquery import WriteToBigQuery, BigQueryDisposition
-from apache_beam.options.pipeline_options import PipelineOptions, SetupOptions
+from apache_beam.io.gcp.pubsub import ReadFromPubSub
+from apache_beam.options.pipeline_options import PipelineOptions, SetupOptions, StandardOptions
+from apache_beam.transforms import trigger
 
-# We reuse the EXACT same transforms — that's the whole point of clean
-# separation between business logic and I/O. Only the edges change.
 from pipeline.transforms import (
     AnomalyCheckDoFn,
     AssignEventTimestamp,
     DeduplicateInvoices,
     ParseErpLine,
-    ParseWmsLine,
     VelocityFraudCheck,
     event_to_bronze_row,
 )
@@ -48,7 +42,7 @@ from pipeline.schemas import ErpInvoiceEvent
 log = logging.getLogger(__name__)
 
 
-# ─── BigQuery Schema Definitions ──────────────────────────────────────
+# ─── BigQuery Schema Definitions (must match gcp_batch_main.py) ────────
 BRONZE_SCHEMA = {
     "fields": [
         {"name": "event_uuid", "type": "STRING", "mode": "REQUIRED"},
@@ -91,7 +85,7 @@ GOLD_SCHEMA = {
 }
 
 
-# ─── BigQuery row converters ────────────────────────────────────────────
+# ─── BigQuery row converters (shared with batch) ────────────────────────
 def silver_row(e: ErpInvoiceEvent) -> dict:
     return {
         "invoice_id":        e.invoice_id,
@@ -106,13 +100,13 @@ def silver_row(e: ErpInvoiceEvent) -> dict:
 
 
 def bronze_row(e: dict) -> dict:
-    """event_to_bronze_row already gives us 90% — just stringify timestamp."""
+    """Convert event to bronze row with JSON-serialized payload."""
     return {
         "event_uuid":      e["event_uuid"],
         "source_system":   e["source_system"],
         "event_type":      e["event_type"],
         "event_timestamp": e["event_timestamp"].isoformat(),
-        "payload":         json.dumps(e["payload"]),  # Must be JSON string for FILE_LOADS
+        "payload":         json.dumps(e["payload"]),
     }
 
 
@@ -124,7 +118,7 @@ def gold_row(a: dict) -> dict:
         "rule_name":    a["rule_name"],
         "severity":     a["severity"],
         "reason":       a["reason"],
-        "evidence":     json.dumps(a.get("evidence", {})),  # Must be JSON string
+        "evidence":     json.dumps(a.get("evidence", {})),
         "window_start": a["window_start"].isoformat() if a.get("window_start") else None,
         "window_end":   a["window_end"].isoformat()   if a.get("window_end")   else None,
         "fraud_score":  a.get("fraud_score"),
@@ -132,10 +126,9 @@ def gold_row(a: dict) -> dict:
     }
 
 
-# ─── BigQuery baseline loader (replaces psycopg2 version) ───────────────
+# ─── BigQuery baseline loader ───────────────────────────────────────────
 def load_baseline_from_bq(project: str, dataset_fqn: str) -> dict:
-    """One-shot read of vendor_90day_baseline. On failure: empty dict -> FALLBACK
-    mode kicks in (same robust behavior as Phase 1)."""
+    """One-shot read of vendor_90day_baseline."""
     from google.cloud import bigquery
     project_id, dataset = dataset_fqn.split(":")
     try:
@@ -164,8 +157,8 @@ def load_baseline_from_bq(project: str, dataset_fqn: str) -> dict:
 # ─── pipeline wiring ────────────────────────────────────────────────────
 def build_argparser():
     p = argparse.ArgumentParser()
-    p.add_argument("--wms_input",  required=True, help="GCS path to WMS JSONL")
-    p.add_argument("--erp_input",  required=True, help="GCS path to ERP JSONL")
+    p.add_argument("--erp_subscription", required=True, 
+                   help="Pub/Sub subscription path: projects/PROJECT/subscriptions/SUB")
     p.add_argument("--bq_dataset", required=True, help="project:dataset")
     p.add_argument("--dedup_ttl_seconds",         type=int, default=3600)
     p.add_argument("--velocity_window_seconds",   type=int, default=600)
@@ -183,6 +176,7 @@ def run(argv=None) -> None:
 
     opts = PipelineOptions(beam_args)
     opts.view_as(SetupOptions).save_main_session = True
+    opts.view_as(StandardOptions).streaming = True  # CRITICAL for Pub/Sub
 
     project = opts.get_all_options()["project"]
     bronze_table = f"{known_args.bq_dataset}.bronze_raw_events"
@@ -194,26 +188,25 @@ def run(argv=None) -> None:
     with beam.Pipeline(options=opts) as p:
         baseline_si = p | "BaselineSI" >> beam.Create([baseline_dict])
 
-        # WMS stream
-        wms = (
+        # ERP stream from Pub/Sub
+        erp_raw = (
             p
-            | "ReadWms"  >> beam.io.ReadFromText(known_args.wms_input)
-            | "ParseWms" >> beam.ParDo(ParseWmsLine())
-                              .with_outputs(ParseWmsLine.DEAD_LETTER, main="ok")
+            | "ReadPubSub" >> ReadFromPubSub(
+                subscription=known_args.erp_subscription,
+                with_attributes=False
+            )
         )
 
-        # ERP stream
         erp = (
-            p
-            | "ReadErp"  >> beam.io.ReadFromText(known_args.erp_input)
+            erp_raw
+            | "DecodePubSub" >> beam.Map(lambda msg: msg.decode("utf-8"))
             | "ParseErp" >> beam.ParDo(ParseErpLine())
                               .with_outputs(ParseErpLine.DEAD_LETTER, main="ok")
         )
 
-        # BRONZE — all raw events (idempotent via WRITE_APPEND + load jobs)
+        # BRONZE — all raw events
         (
-            (wms["ok"], erp["ok"])
-            | "FlatBronze"   >> beam.Flatten()
+            erp["ok"]
             | "ToBronzeDict" >> beam.Map(event_to_bronze_row)
             | "FmtBronze"    >> beam.Map(bronze_row)
             | "WriteBronze"  >> WriteToBigQuery(
@@ -221,7 +214,7 @@ def run(argv=None) -> None:
                 schema=BRONZE_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,
                 create_disposition=BigQueryDisposition.CREATE_NEVER,
-                method=WriteToBigQuery.Method.FILE_LOADS,   # FREE (vs streaming)
+                # Streaming uses STREAMING_INSERTS by default (not FILE_LOADS)
             )
         )
 
@@ -240,7 +233,6 @@ def run(argv=None) -> None:
                 schema=SILVER_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,
                 create_disposition=BigQueryDisposition.CREATE_NEVER,
-                method=WriteToBigQuery.Method.FILE_LOADS,
             )
         )
 
@@ -254,12 +246,20 @@ def run(argv=None) -> None:
                 period_s=known_args.velocity_period_seconds,
                 lateness_s=known_args.allowed_lateness_seconds,
             )
-            | "VelToGlobal" >> beam.WindowInto(beam.window.GlobalWindows())
+            | "VelToGlobal" >> beam.WindowInto(
+                beam.window.GlobalWindows(),
+                trigger=trigger.Repeatedly(trigger.AfterProcessingTime(60)),  # Emit every 60s
+                accumulation_mode=trigger.AccumulationMode.DISCARDING
+            )
         )
 
         anomaly = (
             timed
-            | "AnomGlobal" >> beam.WindowInto(beam.window.GlobalWindows())
+            | "AnomGlobal" >> beam.WindowInto(
+                beam.window.GlobalWindows(),
+                trigger=trigger.Repeatedly(trigger.AfterProcessingTime(60)),
+                accumulation_mode=trigger.AccumulationMode.DISCARDING
+            )
             | "Anomaly"    >> beam.ParDo(
                 AnomalyCheckDoFn(known_args.anomaly_stddev_threshold),
                 baseline=beam.pvalue.AsSingleton(baseline_si),
@@ -275,11 +275,10 @@ def run(argv=None) -> None:
                 schema=GOLD_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,
                 create_disposition=BigQueryDisposition.CREATE_NEVER,
-                method=WriteToBigQuery.Method.FILE_LOADS,
             )
         )
 
-    log.info("Batch job finished ✅ — Dataflow worker will now scale to zero.")
+    log.info("Streaming job will continue until manually stopped.")
 
 
 if __name__ == "__main__":
