@@ -16,35 +16,73 @@ Both modes use the **same fraud detection logic** (velocity, anomaly, dedup) and
 
 Confirm each of these BEFORE starting. Stop and fix anything that fails.
 
+**Important**: This deployment is done from **GCP Cloud Shell**, not your local machine.
+
+### Step 0a: Open GCP Cloud Shell
+
+1. Go to GCP Console: https://console.cloud.google.com
+2. Click the Cloud Shell icon (top right): `>_`
+3. Wait for Cloud Shell to initialize
+
+### Step 0b: Clone the Repository in Cloud Shell
+
 ```bash
-# Your real values
+# Clone your GitHub repo
+cd ~
+git clone https://github.com/Poonamm1/supply-chain-fraud-detection.git
+cd supply-chain-fraud-detection
+```
+
+> **Why Cloud Shell?** Your local machine may have VPN/network issues that block PyPI access during Docker builds. Cloud Shell has full internet access and builds linux/amd64 natively for Dataflow.
+
+### Step 0c: Set Environment Variables
+
+```bash
+# Your real GCP values
 export PROJECT_ID=fraud-detect-260526-1750
 export REGION=us-central1
 export REPO=fraud-detection-pipeline-repo
 export TEMPLATE_BUCKET=temp_staging_fraud_detection   # for temp/staging/template spec
 export INPUT_BUCKET=fraud_detection_pipeline_bucket   # where your JSONL lives
 export DATASET=fraud_detection
+```
 
-# ── auth ─────────────────────────────────────────────────────────────────
+### Step 0d: Authenticate and Set Project
+
+```bash
+# Authenticate (if not already done)
 gcloud auth login
-gcloud auth application-default login
-gcloud config set project ${PROJECT_ID}
 
-# ── confirm artifacts you said you already created ──────────────────────
-gcloud artifacts repositories describe ${REPO} --location=${REGION}     # AR repo
-gsutil ls -b gs://${TEMPLATE_BUCKET}                                    # template bucket
-gsutil ls    gs://${INPUT_BUCKET}/                                       # should list your JSONL files
-gcloud iam service-accounts list                                         # copy the SA email
+# Set default project
+gcloud config set project ${PROJECT_ID}
+```
+
+### Step 0e: Verify Resources Exist
+
+```bash
+# Verify Artifact Registry repo
+gcloud artifacts repositories describe ${REPO} --location=${REGION}
+
+# Verify template bucket
+gsutil ls -b gs://${TEMPLATE_BUCKET}
+
+# Verify input bucket
+gsutil ls gs://${INPUT_BUCKET}/
+
+# List service accounts
+gcloud iam service-accounts list
 ```
 
 When the last command runs, grab the **service account email** that looks like:
 ```
-fraud-pipeline-sa@fraud-detect-260526-1750.iam.gserviceaccount.com
+raud-detection-sa@fraud-detect-260526-1750.iam.gserviceaccount.com
 ```
 (NOT your personal `@gmail.com` — Dataflow rejects that.)
 
+**Note**: The service account email might be missing the 'f' in 'fraud'. Use the exact email shown.
+
 ```bash
-export SA_EMAIL=<paste-the-real-sa-email-here>
+export SA_EMAIL=raud-detection-sa@fraud-detect-260526-1750.iam.gserviceaccount.com
 ```
 
 ---
@@ -121,81 +159,82 @@ gsutil cp data/wms_receiving.jsonl gs://${INPUT_BUCKET}/
 gsutil cp data/erp_invoices.jsonl  gs://${INPUT_BUCKET}/
 ```
 
-## 5. Authenticate Docker against Artifact Registry
+## 5. Build & push the Flex Template image using Cloud Build
+
+**Why Cloud Build?** Cloud Shell or local builds may fail to download Python packages due to network restrictions. Cloud Build runs on Google's infrastructure with full internet access and builds linux/amd64 natively.
+
+The build configuration is defined in `gcp/cloudbuild.yaml`.
 
 ```bash
-gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
-```
-> **Skip this step if you're using Cloud Build in step 6** — Cloud Build pushes
-> for you and doesn't need local Docker auth.
+# Set image tags
+export IMAGE_TAG=$(git rev-parse --short HEAD 2>/dev/null || date +%Y%m%d-%H%M%S)
+export AR_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/fraud-detection-flex"
+export AR_TAG="${AR_BASE}:${IMAGE_TAG}"
+export AR_LATEST="${AR_BASE}:latest"
 
-## 6. Build & push the Flex Template image (use Cloud Build — recommended)
-
-Why Cloud Build? Your laptop is behind a VPN that blocks `pypi.org`, so a local
-`docker build` will fail to download Beam wheels. Cloud Build runs on Google's
-infrastructure (full internet), builds linux/amd64 natively, and pushes the
-resulting image straight to Artifact Registry.
-
-```bash
-export AR_URL="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/fraud-detection-flex"
-
+# Submit build to Cloud Build
 gcloud builds submit \
-    --project=${PROJECT_ID} \
-    --tag ${AR_URL}:v1 \
-    --machine-type=e2-highcpu-8 \
-    --timeout=20m \
-    --gcs-source-staging-dir=gs://${TEMPLATE_BUCKET}/cloud-build-source \
-    --config=- <<EOF
-steps:
-  - name: gcr.io/cloud-builders/docker
-    args: ['build', '-f', 'Dockerfile.flex', '-t', '${AR_URL}:v1', '-t', '${AR_URL}:latest', '.']
-images:
-  - '${AR_URL}:v1'
-  - '${AR_URL}:latest'
-options:
-  machineType: E2_HIGHCPU_8
-  logging: CLOUD_LOGGING_ONLY
-timeout: 1200s
-EOF
+    --project="${PROJECT_ID}" \
+    --config="gcp/cloudbuild.yaml" \
+    --substitutions="_AR_TAG=${AR_TAG},_AR_LATEST=${AR_LATEST}"
 ```
 
-First build ≈ 5–8 min. Cost: a few cents per build (Cloud Build free tier
-covers 120 build-minutes/day).
+**What this does**:
+1. Reads the build config from `gcp/cloudbuild.yaml`
+2. Builds the Docker image using `Dockerfile.flex`
+3. Tags the image with both a specific version (`IMAGE_TAG`) and `latest`
+4. Pushes both tags to Artifact Registry
+5. Uses E2_HIGHCPU_8 machine type for faster builds
 
-### Alternative: local `docker build` (only if you have public internet)
-
-```bash
-# Won't work on Walmart VPN — pypi.org is blocked
-docker build --platform=linux/amd64 \
-    --file Dockerfile.flex \
-    --tag ${AR_URL}:v1 --tag ${AR_URL}:latest .
-docker push ${AR_URL}:v1
-docker push ${AR_URL}:latest
+**Expected output**:
+```
+CREATING BUILD...
+BUILD ID: abc123-def456...
+BUILD STATUS: QUEUED
+...
+BUILD STATUS: SUCCESS
 ```
 
-## 7. (skipped — image is already in AR after step 6)
+First build takes ~5-8 minutes. Subsequent builds are faster due to Docker layer caching.
 
-Verify in Console: `Artifact Registry → fraud-detection-pipeline-repo → fraud-detection-flex`
+**Cost**: Cloud Build free tier covers 120 build-minutes/day. Each build costs a few cents.
 
-## 8. Publish the Flex Template spec to GCS
+### Alternative: Use the automated script
 
-This is the JSON file Dataflow reads to know HOW to launch the template.
+Instead of running the above manually, you can use:
 
 ```bash
+./gcp/build_flex_template.sh
+```
+
+This script does the same thing but also publishes the Flex Template spec (covered in step 8).
+
+## 6. Publish the Flex Template spec to GCS
+
+This creates the JSON file that Dataflow reads to launch the template.
+
+```bash
+# If you ran the build manually (not using build_flex_template.sh),
+# you need to publish the template spec:
+
 gcloud dataflow flex-template build \
     gs://${TEMPLATE_BUCKET}/templates/fraud-detection.json \
-    --image ${AR_URL}:latest \
+    --image ${AR_LATEST} \
     --sdk-language PYTHON \
     --metadata-file gcp/metadata.json \
     --project ${PROJECT_ID}
 ```
 
-Verify:
+Verify the template spec was created:
 ```bash
 gsutil cat gs://${TEMPLATE_BUCKET}/templates/fraud-detection.json | head -20
 ```
 
-## 9. Launch a job 🚀
+**Note**: If you used `./gcp/build_flex_template.sh`, this step is already done!
+
+---
+
+## 7. Launch a batch job 🚀
 
 ```bash
 RUN_ID=$(date +%Y%m%d-%H%M%S)
@@ -222,7 +261,7 @@ https://console.cloud.google.com/dataflow/jobs?project=fraud-detect-260526-1750
 ```
 Typical runtime: 4–7 min. ~75% of that is just Dataflow spinning up VMs.
 
-## 10. Verify the results
+## 8. Verify the results
 
 ```bash
 bq query --use_legacy_sql=false \
@@ -236,11 +275,11 @@ Expected: a handful of `VELOCITY` / `ANOMALY` / `FALLBACK` alerts.
 
 ---
 
-## 11. [OPTIONAL] Pub/Sub Streaming Mode Setup
+## 9. [OPTIONAL] Pub/Sub Streaming Mode Setup
 
 If you want **real-time fraud detection** from Pub/Sub instead of batch GCS files:
 
-### 11a. Create Pub/Sub Topic and Subscription
+### 9a. Create Pub/Sub Topic and Subscription
 
 ```bash
 export TOPIC_NAME=erp-invoices
@@ -264,7 +303,7 @@ gcloud pubsub subscriptions create ${SUBSCRIPTION_NAME} \
 ./gcp/setup_pubsub.sh
 ```
 
-### 11b. Grant Pub/Sub Permissions to Service Account
+### 9b. Grant Pub/Sub Permissions to Service Account
 
 ```bash
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
@@ -278,7 +317,7 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --condition=None
 ```
 
-### 11c. Publish Test Messages to Pub/Sub
+### 9c. Publish Test Messages to Pub/Sub
 
 ```bash
 # Generate test fraud data
@@ -300,7 +339,7 @@ echo "✅ Published 20 test messages to Pub/Sub"
 ./gcp/publish_test_messages.sh
 ```
 
-### 11d. Launch Streaming Dataflow Job
+### 9d. Launch Streaming Dataflow Job
 
 ```bash
 RUN_ID=$(date +%Y%m%d-%H%M%S)
@@ -327,7 +366,7 @@ python pipeline/gcp_stream_main.py \
 ./gcp/run_stream_template.sh
 ```
 
-### 11e. Monitor Streaming Job
+### 9e. Monitor Streaming Job
 
 Watch the job in Dataflow Console:
 ```
@@ -344,7 +383,7 @@ bq query --y_sql=false \
    LIMIT 20"
 ```
 
-### 11f. ❗ STOP Streaming Job (Important!)
+### 9f. ⚠️ STOP Streaming Job (Important!)
 
 **Streaming jobs run FOREVER until manually stopped**. After validation:
 
@@ -363,7 +402,7 @@ gcloud dataflow jobs cancel <JOB_ID> --region=${REGION}
 
 ---
 
-## 12. Validation Queries
+## 10. Validation Queries
 
 ### Schema Validation (ensure fields match code)
 
@@ -439,7 +478,7 @@ bq query --use_legacy_sql=false \
 
 ---
 
-## 13. Troubleshooting
+## 11. Troubleshooting
 
 ### Issue: "Field not found" error when writing to BigQuery
 
@@ -532,7 +571,7 @@ gcloud pubsub subscriptions pull ${SUBSCRIPTION_NAME} \
 
 ---
 
-## 14. Tear it all down (stop billing)
+## 12. Tear it all down (stop billing)
 
 ```bash
 # 1. cancel any running jobs
@@ -554,22 +593,34 @@ gcloud projects delete ${PROJECT_ID}
 
 ---
 
-## 15. v2 — Quick Redeploy Commands
+## 13. v2 — Quick Redeploy Commands
 
-Once you've done all of the above ONCE, future deploys are much shorter:
+Once you've done all of the above ONCE, future deploys are much shorter.
 
-### Batch Mode (GCS Input)
+**Important**: Always work from GCP Cloud Shell, not your local machine.
+
+### Step 1: Pull Latest Code
 
 ```bash
-# Rebuild + republish Flex Template
+# In GCP Cloud Shell
+cd ~/supply-chain-fraud-detection
+git pull origin main
+```
+
+### Step 2: Rebuild & Deploy
+
+#### Batch Mode (GCS Input)
+
+```bash
+# Rebuild + republish Flex Template (one command)
 ./gcp/build_flex_template.sh
 
 # Launch batch job
-SA_EMAIL=<your-sa>@${PROJECT_ID}.iam.gserviceaccount.com \
+SA_EMAIL=raud-detection-sa@fraud-detect-260526-1750.iam.gserviceaccount.com \
   ./gcp/run_flex_template.sh
 ```
 
-### Streaming Mode (Pub/Sub Input)
+#### Streaming Mode (Pub/Sub Input)
 
 ```bash
 # One-time: Setup Pub/Sub (only needed once)
@@ -588,7 +639,7 @@ gcloud dataflow jobs cancel <JOB_ID> --region=us-central1
 
 ---
 
-## 16. Architecture Summary
+## 14. Architecture Summary
 
 | Feature | Batch Mode | Streaming Mode |
 |---------|------------|----------------|
@@ -603,7 +654,7 @@ gcloud dataflow jobs cancel <JOB_ID> --region=us-central1
 
 ---
 
-## 17. TL;DR Quick Reference
+## 15. TL;DR Quick Reference
 
 ### Batch Deployment
 
