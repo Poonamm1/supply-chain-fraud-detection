@@ -17,7 +17,14 @@ Cost model:
 """
 import argparse
 import logging
+import os
 import sys
+
+# Bootstrap: when Dataflow runs this script directly (not via `python -m`),
+# the parent directory isn't on sys.path. Fix it so `from pipeline.transforms`
+# works. This ONLY runs when __package__ is None (i.e., direct execution).
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import apache_beam as beam
 from apache_beam.io.gcp.bigquery import WriteToBigQuery, BigQueryDisposition
