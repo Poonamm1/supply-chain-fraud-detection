@@ -35,3 +35,8 @@ htmlcov/
 *_pii.*
 *ssn*
 *hipaa*
+
+# Documentation files (keep local only)
+CHANGELOG.md
+QUICKSTART.md
+docs/FRAUD_ENHANCEMENT_GUIDE.md
