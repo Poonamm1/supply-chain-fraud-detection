@@ -77,6 +77,11 @@ class DeduplicateInvoicesDoFn(beam.DoFn):
     ):
         invoice_id, event = element
         if seen.read() == "1":
+            # 🐶 Log duplicate suppression
+            log.info(
+                "DUPLICATE_SUPPRESSED | invoice_id=%s vendor=%s amount=%.2f",
+                invoice_id, event.vendor_id, event.invoice_amount
+            )
             yield pvalue.TaggedOutput(self.DUPLICATES, event)
             return
         seen.write("1")
@@ -127,18 +132,34 @@ class FlagDuplicateAmounts(beam.DoFn):
         for amt, grp in buckets.items():
             if len(grp) < self.MIN_REPEATS:
                 continue
+            
+            # 🐶 Structured fraud detection log
+            log.warning(
+                "VELOCITY_FRAUD_DETECTED | vendor=%s amount=%s count=%d window_start=%s",
+                vendor_id, amt, len(grp), _window_dt(w.start)
+            )
+            
+            invoice_ids = [e.invoice_id for e in grp]
+            fraud_score = min(100, len(grp) * 10)  # Higher count = higher score
+            
             for ev in grp:
                 yield {
                     "invoice_id": ev.invoice_id,
                     "vendor_id":  vendor_id,
                     "rule_name":  "VELOCITY",
                     "severity":   "HIGH",
-                    "reason":     f"{len(grp)}x ${amt} in 10-min window",
-                    "evidence":   {"amount": float(amt),
-                                   "occurrences": len(grp),
-                                   "invoice_ids": [e.invoice_id for e in grp]},
+                    "reason":     f"{len(grp)} invoices @ ${amt} in {(w.end.micros - w.start.micros) // 1_000_000}s window",
+                    "evidence":   {
+                        "amount": float(amt),
+                        "occurrences": len(grp),
+                        "invoice_ids": invoice_ids,
+                        "window_duration_seconds": (w.end.micros - w.start.micros) // 1_000_000,
+                        "fraud_pattern": "rapid_duplicate_amounts",
+                    },
                     "window_start": _window_dt(w.start),
                     "window_end":   _window_dt(w.end),
+                    "fraud_score":  fraud_score,
+                    "alert_source": "velocity_check",
                 }
 
 
@@ -194,7 +215,10 @@ class AnomalyCheckDoFn(beam.DoFn):
         try:
             stats = baseline.get(event.vendor_id)
             if stats is None:
-                log.warning("No baseline for vendor=%s — FALLBACK", event.vendor_id)
+                log.warning(
+                    "BASELINE_MISSING | vendor=%s invoice=%s → FALLBACK",
+                    event.vendor_id, event.invoice_id
+                )
                 yield self._fallback(event, "No baseline available")
                 return
 
@@ -205,33 +229,66 @@ class AnomalyCheckDoFn(beam.DoFn):
 
             z = (event.invoice_amount - avg) / sd
             if abs(z) >= self._z:
+                severity = "CRITICAL" if abs(z) >= 5 else "HIGH"
+                fraud_score = min(100, int(abs(z) * 10))  # z=5 → score=50, z=10 → 100
+                
+                # 🐶 Structured fraud detection log
+                log.warning(
+                    "ANOMALY_DETECTED | vendor=%s invoice=%s amount=%.2f z_score=%.2f severity=%s",
+                    event.vendor_id, event.invoice_id, event.invoice_amount, z, severity
+                )
+                
                 yield {
                     "invoice_id":   event.invoice_id,
                     "vendor_id":    event.vendor_id,
                     "rule_name":    "ANOMALY",
-                    "severity":     "CRITICAL" if abs(z) >= 5 else "HIGH",
-                    "reason":       f"{z:+.2f}σ from avg ${avg:.2f}",
-                    "evidence":     {"amount": event.invoice_amount,
-                                     "baseline_avg": avg,
-                                     "z_score": round(z, 3)},
+                    "severity":     severity,
+                    "reason":       f"Invoice ${event.invoice_amount:,.2f} is {abs(z):.1f}σ from vendor avg ${avg:,.2f}",
+                    "evidence":     {
+                        "amount": event.invoice_amount,
+                        "baseline_avg": avg,
+                        "baseline_stddev": sd,
+                        "z_score": round(z, 3),
+                        "deviation_pct": round(((event.invoice_amount - avg) / avg) * 100, 2),
+                        "fraud_pattern": "statistical_outlier",
+                    },
                     "window_start": None,
                     "window_end":   None,
+                    "fraud_score":  fraud_score,
+                    "alert_source": "anomaly_check",
                 }
+            else:
+                # Normal invoice - log for debugging
+                log.debug(
+                    "NORMAL_INVOICE | vendor=%s amount=%.2f z_score=%.2f",
+                    event.vendor_id, event.invoice_amount, z
+                )
+                
         except Exception as exc:                                  # noqa: BLE001
             log.critical("Scoring crashed for invoice=%s: %s",
                          event.invoice_id, exc)
             yield self._fallback(event, f"Scoring error: {exc}")
 
     def _fallback(self, event, reason: str) -> Dict[str, Any]:
+        log.info(
+            "FALLBACK_TRIGGERED | vendor=%s invoice=%s reason=%s",
+            event.vendor_id, event.invoice_id, reason
+        )
         return {
             "invoice_id":   event.invoice_id,
             "vendor_id":    event.vendor_id,
             "rule_name":    "FALLBACK",
             "severity":     "MEDIUM",
             "reason":       f"{self.FALLBACK}: {reason}",
-            "evidence":     {"amount": event.invoice_amount},
+            "evidence":     {
+                "amount": event.invoice_amount,
+                "fallback_reason": reason,
+                "fraud_pattern": "unknown_vendor",
+            },
             "window_start": None,
             "window_end":   None,
+            "fraud_score":  25,  # Medium-risk fallback score
+            "alert_source": "fallback_path",
         }
 
 

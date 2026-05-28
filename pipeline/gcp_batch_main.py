@@ -82,6 +82,8 @@ def gold_row(a: dict) -> dict:
         "evidence":     a.get("evidence"),
         "window_start": a["window_start"].isoformat() if a.get("window_start") else None,
         "window_end":   a["window_end"].isoformat()   if a.get("window_end")   else None,
+        "fraud_score":  a.get("fraud_score"),
+        "alert_source": a.get("alert_source", "unknown"),
     }
 
 

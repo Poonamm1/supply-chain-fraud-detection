@@ -48,9 +48,11 @@ CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.gold_fraud_alerts` (
     rule_name     STRING NOT NULL,    -- VELOCITY | ANOMALY | FALLBACK
     severity      STRING NOT NULL,    -- CRITICAL | HIGH | MEDIUM | LOW
     reason        STRING,
-    evidence      JSON,
+    evidence      JSON,               -- Structured fraud evidence
     window_start  TIMESTAMP,
     window_end    TIMESTAMP,
+    fraud_score   INT64,              -- 0-100 risk score
+    alert_source  STRING,             -- velocity_check | anomaly_check | fallback_path
     detected_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
 PARTITION BY DATE(detected_at)
