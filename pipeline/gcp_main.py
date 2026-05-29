@@ -23,7 +23,12 @@ by passing --mode as a template parameter.
 """
 import argparse
 import logging
+import os
 import sys
+
+# Bootstrap sys.path for Flex Template execution
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logging.basicConfig(
     level=logging.INFO,
