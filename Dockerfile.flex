@@ -27,7 +27,10 @@ ENV PYTHONUNBUFFERED=1 \
 #   FLEX_TEMPLATE_PYTHON_PY_FILE          → the pipeline entry script
 #   FLEX_TEMPLATE_PYTHON_SETUP_FILE       → so worker VMs can pip-install our pkg
 #   FLEX_TEMPLATE_PYTHON_REQUIREMENTS_FILE→ pinned deps for the worker harness
-ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/template/pipeline/gcp_batch_main.py" \
+#
+# UNIFIED ENTRYPOINT: gcp_main.py handles both batch and streaming modes.
+# Pass --mode=batch or --mode=streaming as a template parameter.
+ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/template/pipeline/gcp_main.py" \
     FLEX_TEMPLATE_PYTHON_SETUP_FILE="/template/setup.py" \
     FLEX_TEMPLATE_PYTHON_REQUIREMENTS_FILE="/template/requirements-flex.txt"
 

@@ -53,7 +53,7 @@ gcloud dataflow flex-template run "${JOB_NAME}" \
   --staging-location="${STAGING_LOCATION}" \
   --max-workers=2 \
   --worker-machine-type=e2-small \
-  --parameters="wms_input=${WMS_INPUT},erp_input=${ERP_INPUT},bq_dataset=${BQ_DATASET}"
+  --parameters="mode=batch,wms_input=${WMS_INPUT},erp_input=${ERP_INPUT},bq_dataset=${BQ_DATASET}"
 
 echo ""
 echo "✅ Job submitted. Track at:"

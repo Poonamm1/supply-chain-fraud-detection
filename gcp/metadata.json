@@ -1,25 +1,50 @@
 {
   "name": "Supply Chain Fraud Detection",
-  "description": "Batch Apache Beam pipeline that ingests WMS + ERP JSONL events from GCS and writes bronze/silver/gold tables to BigQuery, with velocity + anomaly fraud detection.",
+  "description": "Unified Apache Beam pipeline supporting both batch (GCS) and streaming (Pub/Sub) modes. Ingests WMS + ERP events and writes bronze/silver/gold tables to BigQuery with velocity + anomaly fraud detection.",
   "parameters": [
     {
+      "name": "mode",
+      "label": "Pipeline mode",
+      "helpText": "Pipeline execution mode: 'batch' (reads from GCS) or 'streaming' (reads from Pub/Sub). Required.",
+      "regexes": ["^(batch|streaming)$"],
+      "paramType": "TEXT"
+    },
+    {
       "name": "wms_input",
-      "label": "WMS input JSONL path",
-      "helpText": "GCS path to the WMS receiving events file. Example: gs://my-bucket/wms_receiving.jsonl",
+      "label": "[BATCH] WMS input JSONL path",
+      "helpText": "GCS path to the WMS receiving events file. Example: gs://my-bucket/wms_receiving.jsonl. Required for batch mode.",
       "regexes": ["^gs:\\/\\/[^\\n\\r]+$"],
+      "isOptional": true,
       "paramType": "GCS_READ_FILE"
     },
     {
       "name": "erp_input",
-      "label": "ERP input JSONL path",
-      "helpText": "GCS path to the ERP invoices file. Example: gs://my-bucket/erp_invoices.jsonl",
+      "label": "[BATCH] ERP input JSONL path",
+      "helpText": "GCS path to the ERP invoices file. Example: gs://my-bucket/erp_invoices.jsonl. Required for batch mode.",
       "regexes": ["^gs:\\/\\/[^\\n\\r]+$"],
+      "isOptional": true,
       "paramType": "GCS_READ_FILE"
+    },
+    {
+      "name": "wms_subscription",
+      "label": "[STREAMING] WMS Pub/Sub subscription",
+      "helpText": "Full subscription path for WMS events. Example: projects/PROJECT/subscriptions/wms-events-sub. Required for streaming mode.",
+      "regexes": ["^projects\\/[a-z0-9-]+\\/subscriptions\\/[a-zA-Z0-9-_]+$"],
+      "isOptional": true,
+      "paramType": "PUBSUB_SUBSCRIPTION"
+    },
+    {
+      "name": "erp_subscription",
+      "label": "[STREAMING] ERP Pub/Sub subscription",
+      "helpText": "Full subscription path for ERP events. Example: projects/PROJECT/subscriptions/erp-events-sub. Required for streaming mode.",
+      "regexes": ["^projects\\/[a-z0-9-]+\\/subscriptions\\/[a-zA-Z0-9-_]+$"],
+      "isOptional": true,
+      "paramType": "PUBSUB_SUBSCRIPTION"
     },
     {
       "name": "bq_dataset",
       "label": "BigQuery dataset (project:dataset)",
-      "helpText": "Fully qualified target dataset. Example: fraud-detect-260526-1750:fraud_detection",
+      "helpText": "Fully qualified target dataset. Example: fraud-detect-260526-1750:fraud_detection. Required for both modes.",
       "regexes": ["^[a-z0-9-]+:[A-Za-z0-9_]+$"],
       "paramType": "TEXT"
     },

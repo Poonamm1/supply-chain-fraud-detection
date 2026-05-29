@@ -21,6 +21,10 @@ SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-raud-detection-sa@${PROJECT_ID}.iam.gservice
 STAGING_LOCATION="${STAGING_LOCATION:-gs://temp_staging_fraud_detection/staging}"
 TEMP_LOCATION="${TEMP_LOCATION:-gs://temp_staging_fraud_detection/temp}"
 
+# Flex Template location
+TEMPLATE_BUCKET="${TEMPLATE_BUCKET:-temp_staging_fraud_detection}"
+TEMPLATE_GCS_PATH="${TEMPLATE_GCS_PATH:-gs://${TEMPLATE_BUCKET}/templates/fraud-detection.json}"
+
 # Pub/Sub subscriptions (updated names)
 WMS_SUBSCRIPTION="${WMS_SUBSCRIPTION:-projects/${PROJECT_ID}/subscriptions/wms-events-sub}"
 ERP_SUBSCRIPTION="${ERP_SUBSCRIPTION:-projects/${PROJECT_ID}/subscriptions/erp-events-sub}"
@@ -42,26 +46,20 @@ echo ""
 
 command -v gcloud >/dev/null || { echo "❌ gcloud not installed"; exit 1; }
 
-echo "▶ Running Python streaming pipeline directly (for testing)..."
-echo "  (In production, use a Flex Template with gcp_stream_main.py as entrypoint)"
+echo "▶ Launching streaming job via Flex Template..."
 echo ""
 
-# For testing, run directly with DirectRunner or DataflowRunner
-python pipeline/gcp_stream_main.py \
-  --runner=DataflowRunner \
+# Launch via Flex Template with mode=streaming
+gcloud dataflow flex-template run "${JOB_NAME}" \
+  --template-file-gcs-location="${TEMPLATE_GCS_PATH}" \
   --project="${PROJECT_ID}" \
   --region="${REGION}" \
-  --job_name="${JOB_NAME}" \
-  --staging_location="${STAGING_LOCATION}" \
-  --temp_location="${TEMP_LOCATION}" \
-  --service_account_email="${SERVICE_ACCOUNT}" \
-  --wms_subscription="${WMS_SUBSCRIPTION}" \
-  --erp_subscription="${ERP_SUBSCRIPTION}" \
-  --bq_dataset="${BQ_DATASET}" \
-  --machine_type=e2-small \
-  --max_num_workers=2 \
-  --num_workers=1 \
-  --autoscaling_algorithm=THROUGHPUT_BASED
+  --service-account-email="${SERVICE_ACCOUNT}" \
+  --temp-location="${TEMP_LOCATION}" \
+  --staging-location="${STAGING_LOCATION}" \
+  --max-workers=2 \
+  --worker-machine-type=e2-small \
+  --parameters="mode=streaming,wms_subscription=${WMS_SUBSCRIPTION},erp_subscription=${ERP_SUBSCRIPTION},bq_dataset=${BQ_DATASET}"
 
 echo ""
 echo "✅ Streaming job launched: ${JOB_NAME}"
