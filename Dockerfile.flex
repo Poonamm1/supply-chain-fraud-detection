@@ -47,8 +47,11 @@ RUN pip install --upgrade \
 
 # Copy the pipeline source LAST so source edits don't bust the pip cache.
 COPY pipeline/   /template/pipeline/
-COPY scripts/    /template/scripts/
 COPY setup.py    /template/setup.py
+
+# NOTE: scripts/ (now in gcp/scripts/) contains test data generators
+# (generate_mock_data.py) which are NOT needed for pipeline execution.
+# They run locally only, so we don't COPY them into the production image.
 
 # OFFLINE FALLBACK: see Dockerfile (same wheelhouse pattern works here).
 # COPY wheelhouse/ /tmp/wheelhouse/
