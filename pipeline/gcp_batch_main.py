@@ -93,6 +93,7 @@ GOLD_SCHEMA = {
 
 # ─── BigQuery row converters ────────────────────────────────────────────
 def silver_row(e: ErpInvoiceEvent) -> dict:
+    from datetime import datetime, timezone
     return {
         "invoice_id":        e.invoice_id,
         "po_no":             e.po_no,
@@ -102,22 +103,26 @@ def silver_row(e: ErpInvoiceEvent) -> dict:
         "invoice_timestamp": e.invoice_timestamp.isoformat(),
         "bank_account_hash": e.bank_account_hash,
         "email_id":          e.email_id,
+        "ingested_at":       datetime.now(timezone.utc).isoformat(),  # ✅ FIX: Add ingested_at
     }
 
 
 def bronze_row(e: dict) -> dict:
     """event_to_bronze_row already gives us 90% — just stringify timestamp."""
+    from datetime import datetime, timezone
     return {
         "event_uuid":      e["event_uuid"],
         "source_system":   e["source_system"],
         "event_type":      e["event_type"],
         "event_timestamp": e["event_timestamp"].isoformat(),
         "payload":         json.dumps(e["payload"]),  # Must be JSON string for FILE_LOADS
+        "ingested_at":     datetime.now(timezone.utc).isoformat(),  # ✅ FIX: Add ingested_at
     }
 
 
 def gold_row(a: dict) -> dict:
     """Convert fraud alert dict to BigQuery gold row with proper types."""
+    from datetime import datetime, timezone
     return {
         "invoice_id":   a["invoice_id"],
         "vendor_id":    a["vendor_id"],
@@ -129,6 +134,7 @@ def gold_row(a: dict) -> dict:
         "window_end":   a["window_end"].isoformat()   if a.get("window_end")   else None,
         "fraud_score":  a.get("fraud_score"),
         "alert_source": a.get("alert_source", "unknown"),
+        "detected_at":  datetime.now(timezone.utc).isoformat(),  # ✅ FIX: Add detected_at timestamp
     }
 
 

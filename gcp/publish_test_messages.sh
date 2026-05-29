@@ -27,6 +27,12 @@ echo ""
 
 # ── Generate test data first ─────────────────────────────────────────────────────
 echo "▶ Generating test fraud data..."
+
+# Change to repo root first (script is in gcp/ subdirectory)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_ROOT="$( cd "${SCRIPT_DIR}/.." && pwd )"
+cd "${REPO_ROOT}"
+
 python scripts/generate_mock_data.py \
   --wms-out data/wms_receiving.jsonl \
   --erp-out data/erp_invoices.jsonl \
