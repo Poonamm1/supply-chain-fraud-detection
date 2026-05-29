@@ -1,72 +1,242 @@
-# Supply Chain Fraud Detection — Phase 1 🐶
+# Supply Chain Fraud Detection Pipeline
 
-End-to-end Apache Beam pipeline that detects fraud in a Walmart-scale
-warehouse + ERP stream. Phase 1 runs **entirely on your laptop** via the
-`DirectRunner` — no GCP credentials, no internet, no excuses.
+**Production-grade Apache Beam pipeline** for detecting fraud in supply chain ERP/WMS data streams.
 
-| Production target           | Phase 1 emulation              |
-| --------------------------- | ------------------------------ |
-| GCP Pub/Sub topics          | `data/*.jsonl` files           |
-| BigQuery sinks              | Local PostgreSQL (`fraud_detection` DB) |
-| Dataflow streaming runner   | DirectRunner with `--streaming`|
-| 2k msg/s avg, 10k peak      | ~few k msg/s on a laptop       |
-| <1s e2e latency             | Same — windowing tuned for it  |
+Supports both **batch** (GCS) and **streaming** (Pub/Sub) modes on **Google Cloud Dataflow**.
 
-## Project layout
+---
+
+## 🏗️ Architecture
+
+```
+Batch Mode:
+  GCS (JSONL files) → Dataflow → BigQuery (bronze/silver/gold)
+
+Streaming Mode:
+  Pub/Sub → Dataflow → BigQuery (bronze/silver/gold)
+```
+
+### **Fraud Detection Rules**
+
+| Rule | Mechanism |
+|------|----------|
+| `VELOCITY` | 10-min sliding window grouped by vendor_id; ≥3 identical amounts |
+| `ANOMALY` | z-score vs vendor 90-day baseline (3σ threshold) |
+| `FALLBACK` | Triggered when baseline lookup fails or vendor unknown |
+
+### **Data Layers**
+
+- **Bronze**: Raw events with ingestion timestamp
+- **Silver**: Deduplicated invoices with event timestamp
+- **Gold**: Fraud alerts with detection timestamp and evidence JSON
+
+---
+
+## 📁 Project Structure
 
 ```
 .
-├── db/init_tables.sql            ← bronze / silver / gold / baseline DDL
 ├── pipeline/
-│   ├── config.py                 ← 12-factor config object
-│   ├── schemas.py                ← typed event payloads + parsers
-│   ├── transforms.py             ← DoFns, PTransforms, sinks
-│   └── main.py                   ← DAG wiring + DirectRunner entry point
-├── scripts/generate_mock_data.py ← deterministic JSONL stream generator
-├── docker-compose.yml            ← local Postgres
-├── requirements.txt
-└── README.md
+│   ├── gcp_main.py           ← Unified Flex Template entrypoint
+│   ├── gcp_batch_main.py     ← Batch pipeline (GCS → BigQuery)
+│   ├── gcp_stream_main.py    ← Streaming pipeline (Pub/Sub → BigQuery)
+│   ├── schemas.py            ← Dataclass models for events
+│   └── transforms.py         ← Fraud detection DoFns and PTransforms
+├── gcp/
+│   ├── build_flex_template.sh    ← Build and publish Flex Template
+│   ├── run_flex_template.sh      ← Launch batch job
+│   ├── run_stream_template.sh    ← Launch streaming job
+│   ├── setup_pubsub.sh           ← Create Pub/Sub topics/subscriptions
+│   ├── bq_schema.sql             ← BigQuery table DDL
+│   └── scripts/generate_mock_data.py ← Test data generator
+├── Dockerfile.flex           ← Production Flex Template image
+├── setup.py                  ← Python package setup
+├── requirements-flex.txt     ← Production dependencies
+└── README.md                 ← This file
 ```
 
-## Quick start
+---
+
+## 🚀 Quick Start (GCP Deployment)
+
+### **Prerequisites**
+
+- Google Cloud Project with billing enabled
+- Dataflow API, BigQuery API, Pub/Sub API, Artifact Registry API enabled
+- Service account with required IAM roles:
+  - `roles/dataflow.worker`
+  - `roles/storage.objectAdmin`
+  - `roles/bigquery.dataEditor`
+  - `roles/pubsub.editor`
+
+### **1. Clone and Setup**
 
 ```bash
-# 0. Create venv
-uv venv && source .venv/bin/activate
-uv pip install -r requirements.txt
-
-# 1. Start Postgres + auto-apply DDL
-docker compose up -d
-docker compose exec postgres pg_isready -U fraud_app
-
-# 2. Generate mock data (includes intentional fraud signals)
-python scripts/generate_mock_data.py --num-wms 2000 --num-invoices 2000
-
-# 3. Run the pipeline
-python -m pipeline.main \
-    --wms_input data/wms_receiving.jsonl \
-    --erp_input data/erp_invoices.jsonl
-
-# 4. Inspect results
-docker compose exec postgres psql -U fraud_app -d fraud_detection -c \
-  "SELECT rule_name, severity, COUNT(*) FROM gold_fraud_alerts GROUP BY 1,2;"
+git clone https://github.com/Poonamm1/supply-chain-fraud-detection.git
+cd supply-chain-fraud-detection
 ```
 
-## What gets detected?
+### **2. Configure Environment**
 
-| Rule       | Mechanism                                                       |
-| ---------- | --------------------------------------------------------------- |
-| `VELOCITY` | 10-min sliding window grouped by `vendor_id`; ≥3 identical amounts |
-| `ANOMALY`  | z-score vs `vendor_90day_baseline` (3σ threshold)               |
-| `FALLBACK` | Triggered when baseline lookup fails OR vendor unknown          |
+```bash
+export PROJECT_ID="your-gcp-project-id"
+export REGION="us-central1"
+export SA_EMAIL="your-service-account@${PROJECT_ID}.iam.gserviceaccount.com"
+```
 
-Duplicate `invoice_id`s are silently suppressed by a stateful DoFn with a
-24-hour TTL — bounded memory regardless of stream volume.
+### **3. Create GCP Resources**
 
-## Phase 2 roadmap
+```bash
+cd gcp/
 
-* Swap `ReadFromText` → `ReadFromPubSub`
-* Swap `WriteXxx` DoFns → `WriteToBigQuery` (schemas are already compatible)
-* Promote `vendor_90day_baseline` side input to a slowly-changing
-  `PeriodicImpulse` so it refreshes hourly without redeploys
-* Add Dataflow autoscaling + structured streaming metrics → Cloud Monitoring
+# Create BigQuery tables
+bq mk --dataset ${PROJECT_ID}:fraud_detection
+bq query --use_legacy_sql=false < bq_schema.sql
+
+# Create Pub/Sub topics and subscriptions (for streaming mode)
+./setup_pubsub.sh
+
+# Create GCS buckets
+gsutil mb -p ${PROJECT_ID} -l ${REGION} gs://fraud_detection_pipeline_bucket
+gsutil mb -p ${PROJECT_ID} -l ${REGION} gs://temp_staging_fraud_detection
+```
+
+### **4. Build Flex Template**
+
+```bash
+cd gcp/
+./build_flex_template.sh
+```
+
+⏱️ Takes 3-5 minutes to build and publish the Docker image.
+
+### **5. Run Batch Job**
+
+```bash
+# Upload test data to GCS
+gsutil cp ../data/wms_receiving.jsonl gs://fraud_detection_pipeline_bucket/
+gsutil cp ../data/erp_invoices.jsonl gs://fraud_detection_pipeline_bucket/
+
+# Launch batch job
+SA_EMAIL=${SA_EMAIL} ./run_flex_template.sh
+```
+
+### **6. Run Streaming Job**
+
+```bash
+# Publish test messages to Pub/Sub
+./publish_test_messages.sh
+
+# Launch streaming job
+./run_stream_template.sh
+```
+
+---
+
+## 📊 Validation
+
+### **Check Bronze Layer**
+```sql
+SELECT COUNT(*) AS total_events 
+FROM `your-project.fraud_detection.bronze_events`;
+```
+
+### **Check Silver Layer**
+```sql
+SELECT COUNT(*) AS deduplicated_invoices 
+FROM `your-project.fraud_detection.silver_invoices`;
+```
+
+### **Check Fraud Alerts**
+```sql
+SELECT rule_name, severity, COUNT(*) AS alerts
+FROM `your-project.fraud_detection.gold_fraud_alerts`
+GROUP BY rule_name, severity
+ORDER BY rule_name, severity;
+```
+
+---
+
+## 🔧 Configuration
+
+### **Template Parameters**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `mode` | Yes | `batch` or `streaming` |
+| `wms_input` | Batch only | GCS path to WMS events JSONL |
+| `erp_input` | Batch only | GCS path to ERP invoices JSONL |
+| `wms_subscription` | Streaming only | Pub/Sub subscription path for WMS events |
+| `erp_subscription` | Streaming only | Pub/Sub subscription path for ERP events |
+| `bq_dataset` | Yes | BigQuery dataset (project:dataset) |
+| `dedup_ttl_seconds` | No | Dedup TTL in seconds (default: 3600) |
+| `velocity_window_seconds` | No | Velocity window size (default: 600) |
+| `anomaly_stddev_threshold` | No | Anomaly z-score threshold (default: 3.0) |
+
+---
+
+## 📖 Documentation
+
+- [Flex Template Deployment Guide](docs/FLEX_TEMPLATE_DEPLOY.md) - Detailed deployment instructions
+- [GCP Resume Checklist](docs/GCP_RESUME_CHECKLIST.md) - Interview talking points
+
+---
+
+## 🛠️ Development
+
+### **Rebuild After Code Changes**
+
+```bash
+cd gcp/
+./build_flex_template.sh
+```
+
+**Important**: After ANY code changes, you MUST rebuild the Flex Template image. Dataflow pulls the image from Artifact Registry, so old code stays until you rebuild.
+
+### **View Job Logs**
+
+```bash
+# Get latest job ID
+JOB_ID=$(gcloud dataflow jobs list --region=${REGION} --limit=1 --format="value(JOB_ID)")
+
+# View logs
+gcloud logging read "resource.type=dataflow_step AND resource.labels.job_id=${JOB_ID}" \
+  --limit=50 --format=json
+```
+
+### **Cancel Streaming Job**
+
+```bash
+gcloud dataflow jobs list --region=${REGION} --filter='STATE=Running'
+gcloud dataflow jobs cancel JOB_ID --region=${REGION}
+```
+
+---
+
+## 🏆 Production Features
+
+- ✅ **Unified Flex Template** - Single Docker image for batch + streaming
+- ✅ **Stateful Deduplication** - TTL-based invoice_id dedup (bounded memory)
+- ✅ **Event-time Processing** - Custom timestamp assignment from event data
+- ✅ **Multi-layer Architecture** - Bronze/silver/gold medallion pattern
+- ✅ **Fraud Detection** - Velocity, anomaly, and fallback rules
+- ✅ **Production-grade Logging** - Structured logs with context
+- ✅ **IAM Security** - Service account isolation
+- ✅ **Cost Optimized** - Batch jobs exit when done (no idle workers)
+- ✅ **Autoscaling** - Streaming jobs scale based on throughput
+
+---
+
+## 📝 License
+
+MIT License - See LICENSE file for details
+
+---
+
+## 🤝 Contributing
+
+This is a portfolio project. For questions or issues, please open a GitHub issue.
+
+---
+
+**Built for production deployment on Google Cloud Platform** 🚀

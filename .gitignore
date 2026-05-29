@@ -36,7 +36,18 @@ htmlcov/
 *ssn*
 *hipaa*
 
-# Documentation files (keep local only)
+# Local development files (not for production)
 CHANGELOG.md
 QUICKSTART.md
 docs/FRAUD_ENHANCEMENT_GUIDE.md
+TROUBLESHOOTING.md
+CLEANUP_GUIDE.md
+cleanup_local_dev.sh
+debug_latest_job.sh
+pipeline/main.py
+pipeline/config.py
+docker-compose.yml
+Dockerfile
+requirements.txt
+db/
+airflow/
