@@ -44,6 +44,10 @@ from pipeline.transforms import (
     event_to_bronze_row,
 )
 from pipeline.schemas import ErpInvoiceEvent
+from pipeline.feature_engineering import (
+    BuildVendorDailyFeatures,
+    VENDOR_DAILY_FEATURES_SCHEMA,
+)
 
 
 log = logging.getLogger(__name__)
@@ -206,6 +210,7 @@ def run(argv=None) -> None:
     bronze_table = f"{known_args.bq_dataset}.bronze_raw_events"
     silver_table = f"{known_args.bq_dataset}.silver_deduplicated_invoices"
     gold_table   = f"{known_args.bq_dataset}.gold_fraud_alerts"
+    features_table = f"{known_args.bq_dataset}.vendor_daily_features"
 
     baseline_dict = load_baseline_from_bq(project, known_args.bq_dataset)
 
@@ -294,6 +299,38 @@ def run(argv=None) -> None:
             | "WriteGold"          >> WriteToBigQuery(
                 table=gold_table,
                 schema=GOLD_SCHEMA,
+                write_disposition=BigQueryDisposition.WRITE_APPEND,
+                create_disposition=BigQueryDisposition.CREATE_NEVER,
+                method=WriteToBigQuery.Method.FILE_LOADS,
+            )
+        )
+
+        # ─── FEATURE ENGINEERING (ML Platform - Phase 1) ─────────────────────────────
+        # Build vendor-day behavioral features from silver invoices + gold alerts.
+        # This is a NEW downstream layer - existing fraud logic remains unchanged.
+        # Purpose: Create feature store for future Vertex AI models.
+        
+        # Collect alerts (already flattened from velocity + anomaly)
+        gold_alerts = (
+            (velocity, anomaly)
+            | "FlatAlertsForFeatures" >> beam.Flatten()
+        )
+        
+        # Build features by joining silver invoices + gold alerts
+        vendor_features = (
+            {
+                'invoices': deduped["unique"],
+                'alerts': gold_alerts,
+            }
+            | "BuildVendorFeatures" >> BuildVendorDailyFeatures()
+        )
+        
+        # Write to vendor_daily_features table
+        (
+            vendor_features
+            | "WriteFeatures" >> WriteToBigQuery(
+                table=features_table,
+                schema=VENDOR_DAILY_FEATURES_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,
                 create_disposition=BigQueryDisposition.CREATE_NEVER,
                 method=WriteToBigQuery.Method.FILE_LOADS,

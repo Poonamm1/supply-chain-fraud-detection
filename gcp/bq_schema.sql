@@ -59,6 +59,48 @@ PARTITION BY DATE(detected_at)
 CLUSTER BY rule_name, severity
 OPTIONS (require_partition_filter = TRUE);
 
+-- ── FEATURE ENGINEERING (ML Platform) ─────────────────────────────────────
+-- Phase 1: Vendor Daily Features
+-- Purpose: Behavioral feature store for future ML models (Vertex AI)
+-- Source: Aggregates from silver_deduplicated_invoices + gold_fraud_alerts
+-- Usage: Vendor Trust Score, Fraud Probability Models, Risk Ranking
+-- Pattern: Daily aggregation per vendor (feature_date = invoice_timestamp date)
+CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_features` (
+    vendor_id                STRING NOT NULL,
+    feature_date             DATE NOT NULL,
+    
+    -- VOLUME FEATURES (capture spending patterns)
+    -- ML models use these to detect sudden volume changes or unusual spending
+    invoice_count            INT64,              -- How many invoices this vendor submitted today
+    total_invoice_amount     NUMERIC(15, 2),     -- Total dollar amount spent today
+    avg_invoice_amount       NUMERIC(15, 2),     -- Average invoice size (detects micro/macro fraud)
+    min_invoice_amount       NUMERIC(15, 2),     -- Smallest invoice (detects split invoicing fraud)
+    max_invoice_amount       NUMERIC(15, 2),     -- Largest invoice (detects inflated billing)
+    stddev_invoice_amount    NUMERIC(15, 2),     -- Invoice consistency (low = routine, high = erratic)
+    
+    -- TEMPORAL FEATURES (capture timing patterns)
+    -- ML models use these to detect automation, bot activity, or coordinated fraud
+    avg_invoices_per_hour    FLOAT64,            -- Invoice submission rate (detects bot flooding)
+    latest_invoice_timestamp TIMESTAMP,          -- Most recent activity (used for recency weighting)
+    
+    -- ALERT FEATURES (capture risk signals)
+    -- ML models use these as labels and features for supervised learning
+    anomaly_alert_count      INT64,              -- Count of ANOMALY rule triggers today
+    velocity_alert_count     INT64,              -- Count of VELOCITY rule triggers today
+    duplicate_alert_count    INT64,              -- Count of DUPLICATE rule triggers today (future)
+    total_alert_count        INT64,              -- Total alerts (any rule type)
+    high_risk_alert_ratio    FLOAT64,            -- Alerts / Invoices (0.0 - 1.0, fraud propensity)
+    
+    -- METADATA
+    computed_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+)
+PARTITION BY feature_date
+CLUSTER BY vendor_id, total_alert_count DESC
+OPTIONS (
+    require_partition_filter = TRUE,
+    description = 'ML Feature Store: Daily vendor behavioral features for fraud detection models'
+);
+
 -- ── VENDOR BASELINE (small dim table, no partitioning needed) ───────────
 CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_90day_baseline` (
     vendor_id              STRING NOT NULL,
