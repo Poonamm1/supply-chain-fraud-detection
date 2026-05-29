@@ -28,14 +28,13 @@ echo ""
 # ── Generate test data first ─────────────────────────────────────────────────────
 echo "▶ Generating test fraud data..."
 
-# Change to repo root first (script is in gcp/ subdirectory)
+# Get absolute paths (script is in gcp/ subdirectory)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$( cd "${SCRIPT_DIR}/.." && pwd )"
-cd "${REPO_ROOT}"
 
-python scripts/generate_mock_data.py \
-  --wms-out data/wms_receiving.jsonl \
-  --erp-out data/erp_invoices.jsonl \
+python "${REPO_ROOT}/scripts/generate_mock_data.py" \
+  --wms-out "${REPO_ROOT}/data/wms_receiving.jsonl" \
+  --erp-out "${REPO_ROOT}/data/erp_invoices.jsonl" \
   --num-wms "${COUNT}" \
   --num-invoices "${COUNT}"
 
@@ -60,7 +59,7 @@ while IFS= read -r line; do
     
     # Small delay to avoid rate limiting
     sleep 0.1
-done < data/wms_receiving.jsonl
+done < "${REPO_ROOT}/data/wms_receiving.jsonl"
 
 echo ""
 echo "▶ Publishing ERP invoices to Pub/Sub topic: ${ERP_TOPIC}..."
@@ -83,7 +82,7 @@ while IFS= read -r line; do
     
     # Small delay to avoid rate limiting
     sleep 0.1
-done < data/erp_invoices.jsonl
+done < "${REPO_ROOT}/data/erp_invoices.jsonl"
 
 echo ""
 echo "✅ Published ${published_wms} WMS messages to ${WMS_TOPIC}"
