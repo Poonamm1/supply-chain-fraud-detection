@@ -29,7 +29,7 @@
       "name": "wms_subscription",
       "label": "[STREAMING] WMS Pub/Sub subscription",
       "helpText": "Full subscription path for WMS events. Example: projects/PROJECT/subscriptions/wms-events-sub. Required for streaming mode.",
-      "regexes": ["^projects\\/[a-z0-9-]+\\/subscriptions\\/[a-zA-Z0-9-_]+$"],
+      "regexes": ["^projects\\/[a-z0-9-]+\\/subscriptions\\/[-a-zA-Z0-9_]+$"],
       "isOptional": true,
       "paramType": "PUBSUB_SUBSCRIPTION"
     },
@@ -37,7 +37,7 @@
       "name": "erp_subscription",
       "label": "[STREAMING] ERP Pub/Sub subscription",
       "helpText": "Full subscription path for ERP events. Example: projects/PROJECT/subscriptions/erp-events-sub. Required for streaming mode.",
-      "regexes": ["^projects\\/[a-z0-9-]+\\/subscriptions\\/[a-zA-Z0-9-_]+$"],
+      "regexes": ["^projects\\/[a-z0-9-]+\\/subscriptions\\/[-a-zA-Z0-9_]+$"],
       "isOptional": true,
       "paramType": "PUBSUB_SUBSCRIPTION"
     },
