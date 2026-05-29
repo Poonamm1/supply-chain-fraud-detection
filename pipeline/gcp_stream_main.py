@@ -27,6 +27,7 @@ from apache_beam.io.gcp.bigquery import WriteToBigQuery, BigQueryDisposition
 from apache_beam.io.gcp.pubsub import ReadFromPubSub
 from apache_beam.options.pipeline_options import PipelineOptions, SetupOptions, StandardOptions
 from apache_beam.transforms import trigger
+from datetime import datetime, timezone
 
 from pipeline.transforms import (
     AnomalyCheckDoFn,
@@ -86,9 +87,23 @@ GOLD_SCHEMA = {
 }
 
 
+# ─── Timestamp DoFns (add timestamps at processing time, not definition time) ───
+class AddIngestedTimestamp(beam.DoFn):
+    """DoFn to add ingested_at timestamp at processing time."""
+    def process(self, element):
+        element["ingested_at"] = datetime.now(timezone.utc).isoformat()
+        yield element
+
+
+class AddDetectedTimestamp(beam.DoFn):
+    """DoFn to add detected_at timestamp at processing time."""
+    def process(self, element):
+        element["detected_at"] = datetime.now(timezone.utc).isoformat()
+        yield element
+
+
 # ─── BigQuery row converters (shared with batch) ────────────────────────
 def silver_row(e: ErpInvoiceEvent) -> dict:
-    from datetime import datetime, timezone
     return {
         "invoice_id":        e.invoice_id,
         "po_no":             e.po_no,
@@ -98,26 +113,24 @@ def silver_row(e: ErpInvoiceEvent) -> dict:
         "invoice_timestamp": e.invoice_timestamp.isoformat(),
         "bank_account_hash": e.bank_account_hash,
         "email_id":          e.email_id,
-        "ingested_at":       datetime.now(timezone.utc).isoformat(),  # ✅ FIX: Add ingested_at
+        "ingested_at":       None,  # Will be set by AddIngestedTimestamp DoFn
     }
 
 
 def bronze_row(e: dict) -> dict:
     """Convert event to bronze row with JSON-serialized payload."""
-    from datetime import datetime, timezone
     return {
         "event_uuid":      e["event_uuid"],
         "source_system":   e["source_system"],
         "event_type":      e["event_type"],
         "event_timestamp": e["event_timestamp"].isoformat(),
         "payload":         json.dumps(e["payload"]),
-        "ingested_at":     datetime.now(timezone.utc).isoformat(),  # ✅ FIX: Add ingested_at
+        "ingested_at":     e.get("ingested_at"),  # Added by AddIngestedTimestamp DoFn
     }
 
 
 def gold_row(a: dict) -> dict:
     """Convert fraud alert dict to BigQuery gold row with proper types."""
-    from datetime import datetime, timezone
     return {
         "invoice_id":   a["invoice_id"],
         "vendor_id":    a["vendor_id"],
@@ -129,7 +142,7 @@ def gold_row(a: dict) -> dict:
         "window_end":   a["window_end"].isoformat()   if a.get("window_end")   else None,
         "fraud_score":  a.get("fraud_score"),
         "alert_source": a.get("alert_source", "unknown"),
-        "detected_at":  datetime.now(timezone.utc).isoformat(),  # ✅ FIX: Add detected_at timestamp
+        "detected_at":  a.get("detected_at"),  # Added by AddDetectedTimestamp DoFn
     }
 
 
@@ -232,16 +245,16 @@ def run(argv=None) -> None:
         # BRONZE — all raw events from both WMS and ERP
         (
             (wms["ok"], erp["ok"])
-            | "FlatBronze"   >> beam.Flatten()
-            | "ToBronzeDict" >> beam.Map(event_to_bronze_row)
-            | "FmtBronze"    >> beam.Map(bronze_row)
-            | "WriteBronze"  >> WriteToBigQuery(
+            | "FlatBronze"        >> beam.Flatten()
+            | "ToBronzeDict"      >> beam.Map(event_to_bronze_row)
+            | "AddIngestedTime"   >> beam.ParDo(AddIngestedTimestamp())  # ✅ Add timestamp at processing time
+            | "FmtBronze"         >> beam.Map(bronze_row)
+            | "WriteBronze"       >> WriteToBigQuery(
                 table=bronze_table,
                 schema=BRONZE_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,
                 create_disposition=BigQueryDisposition.CREATE_NEVER,
             )
-        )
         )
 
         # SILVER — stateful dedup + write
@@ -253,8 +266,9 @@ def run(argv=None) -> None:
 
         (
             deduped["unique"]
-            | "FmtSilver"   >> beam.Map(silver_row)
-            | "WriteSilver" >> WriteToBigQuery(
+            | "FmtSilver"          >> beam.Map(silver_row)
+            | "AddSilverTimestamp" >> beam.ParDo(AddIngestedTimestamp())  # ✅ Add timestamp at processing time
+            | "WriteSilver"        >> WriteToBigQuery(
                 table=silver_table,
                 schema=SILVER_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,
@@ -294,9 +308,10 @@ def run(argv=None) -> None:
 
         (
             (velocity, anomaly)
-            | "FlatGold"  >> beam.Flatten()
-            | "FmtGold"   >> beam.Map(gold_row)
-            | "WriteGold" >> WriteToBigQuery(
+            | "FlatGold"        >> beam.Flatten()
+            | "AddDetectedTime" >> beam.ParDo(AddDetectedTimestamp())  # ✅ Add timestamp at processing time
+            | "FmtGold"         >> beam.Map(gold_row)
+            | "WriteGold"       >> WriteToBigQuery(
                 table=gold_table,
                 schema=GOLD_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,

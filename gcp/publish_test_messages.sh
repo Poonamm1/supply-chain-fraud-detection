@@ -32,7 +32,7 @@ echo "▶ Generating test fraud data..."
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$( cd "${SCRIPT_DIR}/.." && pwd )"
 
-python "${REPO_ROOT}/scripts/generate_mock_data.py" \
+python "${SCRIPT_DIR}/scripts/generate_mock_data.py" \
   --wms-out "${REPO_ROOT}/data/wms_receiving.jsonl" \
   --erp-out "${REPO_ROOT}/data/erp_invoices.jsonl" \
   --num-wms "${COUNT}" \
