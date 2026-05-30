@@ -346,11 +346,12 @@ def run(argv=None) -> None:
         
         # ─── BEHAVIORAL FEATURES (from silver invoices only) ────────────────────
         # FIX: Add daily windowing BEFORE GroupByKey (required for streaming)
+        # TESTING: Use AfterProcessingTime(60) for faster feature emission (every 60 seconds)
         behavioral_features = (
             deduped["unique"]
             | "WindowBehavioralDaily" >> beam.WindowInto(
                 beam.window.FixedWindows(24 * 60 * 60),  # 24 hours = 1 day
-                trigger=beam.trigger.AfterWatermark(),
+                trigger=beam.trigger.AfterProcessingTime(60),  # Emit every 60 seconds for testing
                 accumulation_mode=beam.trigger.AccumulationMode.DISCARDING,
                 allowed_lateness=0
             )
@@ -369,12 +370,13 @@ def run(argv=None) -> None:
         
         # ─── RISK FEATURES (from gold alerts only) ────────────────────────────
         # FIX: Add daily windowing BEFORE GroupByKey (required for streaming)
+        # TESTING: Use AfterProcessingTime(60) for faster feature emission (every 60 seconds)
         gold_alerts = (
             (velocity, anomaly)
             | "FlatAlertsForRiskFeatures" >> beam.Flatten()
             | "WindowRiskDaily" >> beam.WindowInto(
                 beam.window.FixedWindows(24 * 60 * 60),  # 24 hours = 1 day
-                trigger=beam.trigger.AfterWatermark(),
+                trigger=beam.trigger.AfterProcessingTime(60),  # Emit every 60 seconds for testing
                 accumulation_mode=beam.trigger.AccumulationMode.DISCARDING,
                 allowed_lateness=0
             )

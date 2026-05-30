@@ -65,37 +65,44 @@ OPTIONS (require_partition_filter = TRUE);
 --
 -- ARCHITECTURE PRINCIPLE:
 --   Feature engineering is INDEPENDENT from Gold fraud detection layer.
+--   Behavioral features (from Silver) separate from Risk features (from Gold).
 --   
---   Silver (invoices)
---     ├── Gold (fraud alerts) - independent
---     └── Feature Engineering - independent
---         ├── Behavioral Features (from silver ONLY)
---         └── Risk Features (from gold ONLY)
+--   Bronze (raw events)
+--     ↓
+--   Silver (deduplicated invoices)
+--     ├────────► Gold Fraud Alerts (business alerts)
+--     │
+--     └────────► Feature Engineering
+--                 ├─ Behavioral Features (from Silver - ALL invoices)
+--                 └─ Risk Features (from Gold - fraud labels)
 --
--- WHY SEPARATE TABLES?
---   1. Stability: Behavioral features don't change when fraud rules evolve
---   2. Reusability: Same behavioral features used by multiple ML models
---   3. Clear Separation: Features (X) vs Labels (y) for supervised learning
---   4. Production Pattern: Google, Netflix, Uber use separate feature/label stores
+-- WHY SEPARATE BEHAVIORAL + RISK?
+--   1. STABILITY: Behavioral features don't change when fraud rules evolve
+--   2. COMPLETENESS: Behavioral = ALL invoices (10,000/day), Risk = alerts only (50/day)
+--   3. SEPARATION: Features (X) vs Labels (y) for supervised learning
+--   4. REUSABILITY: Behavioral features used by multiple ML models
+--   5. PRODUCTION: Google, Netflix, Uber use this pattern
 --
--- TABLES:
---   1. vendor_daily_behavioral_features (PRIMARY) - behavioral signals only
---   2. vendor_daily_risk_features (OPTIONAL) - fraud labels/risk signals
---   3. vendor_daily_features (VIEW) - joins behavioral + risk for ML training
+-- EXAMPLE:
+--   Silver: 10,000 invoices/day
+--     ├─→ Behavioral: 10,000 rows (ALL vendors)
+--     └─→ Risk: 50 rows (only vendors with alerts)
+--   Training: LEFT JOIN behavioral + risk = 10,000 rows (50 fraud, 9,950 clean)
+--
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- ─────────────────────────────────────────────────────────────────────────
--- TABLE 1: Behavioral Features (INDEPENDENT from fraud detection)
+-- TABLE 1: BEHAVIORAL FEATURES (from Silver invoices ONLY)
 -- ─────────────────────────────────────────────────────────────────────────
--- Source: silver_deduplicated_invoices ONLY
--- Purpose: Stable, reusable behavioral features for all ML models
--- Pattern: Daily aggregation per vendor
--- 
--- DESIGN DECISIONS:
---   - Partition by feature_date: Cost optimization (query only needed dates)
---   - Cluster by vendor_id: Most queries filter by vendor
---   - Rolling windows (7d, 30d): Computed via scheduled query (see compute_rolling_features.sql)
---   - NO alert features: Behavioral features are intrinsic, not derived from rules
+-- Source: silver_deduplicated_invoices (ALL invoices, not just fraud)
+-- Purpose: Stable behavioral features for ML training
+-- Written by: Dataflow (BuildVendorDailyBehavioralFeatures transform)
+-- Granularity: vendor-day
+--
+-- WHY FROM SILVER?
+--   - ALL invoices (100% data coverage)
+--   - Independent from fraud rules (stable feature schema)
+--   - Includes clean vendors (needed for negative training examples)
 --
 CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_behavioral_features` (
     vendor_id                STRING NOT NULL,
@@ -107,7 +114,7 @@ CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_behavioral_
     avg_invoice_amount       NUMERIC(15, 2) NOT NULL,  -- Typical invoice size
     min_invoice_amount       NUMERIC(15, 2) NOT NULL,  -- Distribution lower bound
     max_invoice_amount       NUMERIC(15, 2) NOT NULL,  -- Distribution upper bound
-    stddev_invoice_amount    NUMERIC(15, 2) NOT NULL,  -- Invoice volatility/consistency
+    stddev_invoice_amount    NUMERIC(15, 2),           -- Invoice volatility (NULL if count=1)
     
     -- TEMPORAL FEATURES (capture timing patterns)
     avg_invoices_per_hour    FLOAT64 NOT NULL,         -- Submission rate (bot detection)
@@ -128,21 +135,26 @@ PARTITION BY feature_date
 CLUSTER BY vendor_id
 OPTIONS (
     require_partition_filter = TRUE,
-    description = 'ML Feature Store: Pure behavioral features (independent from fraud rules)'
+    description = 'Behavioral features from Silver invoices (ALL vendors). Written by Dataflow BuildVendorDailyBehavioralFeatures transform.'
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
--- TABLE 2: Risk Features (OPTIONAL - labels for supervised learning)
+-- TABLE 2: RISK FEATURES (from Gold fraud alerts ONLY)
 -- ─────────────────────────────────────────────────────────────────────────
--- Source: gold_fraud_alerts ONLY
--- Purpose: Ground truth labels derived from fraud detection rules
--- Pattern: Daily aggregation per vendor (only vendors with alerts)
+-- Source: gold_fraud_alerts (fraud alerts only)
+-- Purpose: Fraud labels for supervised learning
+-- Written by: Dataflow (BuildVendorDailyRiskFeatures transform)
+-- Granularity: vendor-day
 --
--- DESIGN DECISIONS:
---   - Separate from behavioral features: Rule logic evolves, features don't
---   - OPTIONAL: Can skip for unsupervised learning or pure feature engineering
---   - Sparse table: Only vendors with alerts (most vendors are clean)
---   - JOIN with behavioral at query time (not at storage time)
+-- WHY FROM GOLD?
+--   - Fraud labels derived from detection rules
+--   - Can evolve independently (new fraud rules don't break behavioral features)
+--   - Sparse table (only vendors with alerts)
+--
+-- IMPORTANT:
+--   This table is SPARSE (only vendors with alerts on a given day).
+--   For ML training, use LEFT JOIN with behavioral features so clean vendors
+--   appear with 0 alert counts.
 --
 CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_risk_features` (
     vendor_id                STRING NOT NULL,
@@ -167,23 +179,23 @@ CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_risk_featur
     computed_at              TIMESTAMP NOT NULL
 )
 PARTITION BY feature_date
-CLUSTER BY vendor_id, total_alert_count DESC
+CLUSTER BY vendor_id
 OPTIONS (
     require_partition_filter = TRUE,
-    description = 'ML Label Store: Risk signals derived from fraud detection rules'
+    description = 'Risk features from Gold fraud alerts (SPARSE - only vendors with alerts). Written by Dataflow BuildVendorDailyRiskFeatures transform.'
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
--- VIEW: vendor_daily_features (JOIN behavioral + risk for ML training)
+-- VIEW: VENDOR DAILY FEATURES (JOIN behavioral + risk for ML training)
 -- ─────────────────────────────────────────────────────────────────────────
--- Purpose: Single table for Vertex AI export, training, dashboards
--- Pattern: LEFT JOIN (all vendors, even those with no alerts)
+-- Purpose: Single table for Vertex AI export, ML training, dashboards
+-- Pattern: LEFT JOIN (all vendors, even clean ones with no alerts)
 --
 -- WHY A VIEW?
 --   - Flexibility: Can change join logic without recomputing features
 --   - Storage: No duplicate data (behavioral + risk stored once)
 --   - Clean Separation: Source tables remain independent
---   - Production Pattern: Large companies use views for ML training tables
+--   - Production Pattern: Large companies use views for ML training datasets
 --
 -- USAGE:
 --   SELECT * FROM vendor_daily_features WHERE feature_date >= '2026-01-01'
@@ -231,12 +243,148 @@ FROM `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_behavioral_features` b
 LEFT JOIN `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_risk_features` r
     ON b.vendor_id = r.vendor_id
     AND b.feature_date = r.feature_date
-
 -- Filter to reduce view size (optional - remove if you want all history)
 -- WHERE b.feature_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
 ;
 
--- ── VENDOR BASELINE (small dim table, no partitioning needed) ───────────
+-- ══════════════════════════════════════════════════════════════════════════
+-- PHASE 2: TRUST SCORE ENGINE & VENDOR RISK RANKING
+-- ══════════════════════════════════════════════════════════════════════════
+--
+-- PURPOSE:
+--   Bridge between Feature Engineering (Phase 1) and Future ML Models (Phase 3+).
+--   Trust Score combines behavioral + risk features into single risk assessment.
+--   Vendor Ranking identifies top risky vendors for investigation.
+--
+-- DESIGN PRINCIPLES:
+--   1. Rule-Based (v1.0): Weighted penalty system (anomaly=15, velocity=10, dup=5)
+--   2. Explainable: Every score has breakdown (which alerts triggered, penalty amounts)
+--   3. Historical: Track score trends over time (detect vendor degradation)
+--   4. ML-Ready: Schema designed to accept ML-based scores without redesign
+--
+-- EVOLUTION PATH:
+--   Phase 2: Rule-based trust score (100 - penalties)
+--   Phase 3: ML-assisted (logistic regression coefficients → weights)
+--   Phase 4: Fully ML (neural network, probability scores)
+--
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- TABLE: VENDOR TRUST SCORES (Historical Trust Score Records)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Source: vendor_daily_behavioral_features + vendor_daily_risk_features
+-- Written by: BigQuery Scheduled Query (compute_trust_scores.sql)
+-- Frequency: Daily at 2:30 AM (after rolling features computed)
+-- Granularity: vendor-day
+--
+-- PURPOSE:
+--   - Historical record of trust scores (permanent audit trail)
+--   - Trend analysis (score degradation over time)
+--   - ML training labels (future fraud probability models)
+--   - Reporting/dashboards (vendor performance reviews)
+--
+-- TRUST SCORE FORMULA (v1.0 - Rule-Based):
+--   penalty = (anomaly_count * 15) + (velocity_count * 10) + (duplicate_count * 5)
+--   trust_score = MAX(0, 100 - penalty)
+--
+-- RISK LEVELS:
+--   EXCELLENT: trust_score >= 90  (P90+, minimal fraud risk)
+--   GOOD:      trust_score >= 70  (P70-P90, low fraud risk)
+--   MODERATE:  trust_score >= 50  (P50-P70, medium fraud risk)
+--   HIGH:      trust_score < 50   (P0-P50, high fraud risk)
+--
+-- EXPLAINABILITY:
+--   score_explanation (JSON) contains:
+--     - Base score (100)
+--     - Penalty breakdown (anomaly: 15*count, velocity: 10*count, etc.)
+--     - Final score (100 - tenalty)
+--     - Risk level reasoning
+--
+-- ML EVOLUTION:
+--   Future: Add ml_fraud_probability column (0.0-1.0)
+--   Schema unchanged (trust_score remains for backward compatibility)
+--
+CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_trust_scores` (
+    vendor_id             STRING NOT NULL,
+    score_date            DATE NOT NULL,
+    
+    -- TRUST SCORE (0-100, higher = more trustworthy)
+    trust_score           INT64 NOT NULL,              -- Final trust score (0-100)
+    risk_level            STRING NOT NULL,             -- EXCELLENT | GOOD | MODERATE | HIGH
+    
+    -- PENALTY BREAKDOWN (explainability)
+    behavioral_penalty    INT64 NOT NULL,              -- Penalty from behavioral features (future)
+    risk_penalty          INT64 NOT NULL,              -- Penalty from fraud alerts
+    total_penalty         INT64 NOT NULL,              -- behavioral_penalty + risk_penalty
+    
+    -- ALERT COUNTS (from risk features)
+    anomaly_alert_count   INT64 NOT NULL,              -- ANOMALY rule triggers
+    velocity_alert_count  INT64 NOT NULL,              -- VELOCITY rule triggers
+    duplicate_alert_count INT64 NOT NULL,              -- DUPLICATE rule triggers
+    total_alert_count     INT64 NOT NULL,              -- Sum of all alerts
+    
+    -- EXPLAINABILITY (JSON breakdown)
+    score_explanation     JSON,                        -- Detailed score calculation
+    
+    -- FUTURE ML (Phase 3+)
+    ml_fraud_probability  FLOAT64,                     -- ML-based fraud probability (0.0-1.0)
+    ml_model_version      STRING,                      -- Model version used
+    
+    -- METADATA
+    computed_at           TIMESTAMP NOT NULL
+)
+PARTITION BY score_date
+CLUSTER BY vendor_id, trust_score
+OPTIONS (
+    require_partition_filter = TRUE,
+    description = 'Historical trust scores (daily vendor risk assessment). Partitioned by date, clustered by vendor_id for trend queries.'
+);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- TABLE: VENDOR RISK RANKINGS (Daily Vendor Risk Leaderboard)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Source: vendor_trust_scores
+-- Written by: BigQuery Scheduled Query (compute_vendor_rankings.sql)
+-- Frequency: Daily at 2:45 AM (after trust scores computed)
+-- Granularity: vendor-day
+--
+-- PURPOSE:
+--   - Identify top risky vendors (lowest trust scores)
+--   - Priority queue for fraud investigations
+--   - Executive dashboards ("Top 10 Riskiest Vendors")
+--   - Alert routing (send highest risk to senior analysts)
+--
+-- RANKING LOGIC:
+--   - Rank 1 = LOWEST trust score (highest risk)
+--   - Rank 2 = 2nd lowest trust score
+--   - ...
+--   - Rank N = HIGHEST trust score (lowest risk)
+--
+-- USE CASES:
+--   - "Show me top 10 riskiest vendors today"
+--   - "Which vendors moved up in risk rank this week?"
+--   - "Alert me when vendor enters top 20 risk rank"
+--
+CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_risk_rankings` (
+    ranking_date          DATE NOT NULL,
+    vendor_id             STRING NOT NULL,
+    trust_score           INT64 NOT NULL,              -- Trust score (0-100)
+    risk_rank             INT64 NOT NULL,              -- Rank (1 = highest risk)
+    risk_level            STRING NOT NULL,             -- EXCELLENT | GOOD | MODERATE | HIGH
+    rank_change           INT64,                       -- Change vs yesterday (+/- positions)
+    
+    -- METADATA
+    computed_at           TIMESTAMP NOT NULL
+)
+PARTITION BY ranking_date
+CLUSTER BY vendor_id, risk_rank
+OPTIONS (
+    require_partition_filter = TRUE,
+    description = 'Daily vendor risk rankings (leaderboard of risky vendors). Rank 1 = highest risk. Partitioned by date for daily snapshots.'
+);
+
+-- ─────────────────────────────────────────────────────────────────────────
+
 CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_90day_baseline` (
     vendor_id              STRING NOT NULL,
     avg_invoice_amount     NUMERIC(15, 2),
