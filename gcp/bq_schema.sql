@@ -59,47 +59,182 @@ PARTITION BY DATE(detected_at)
 CLUSTER BY rule_name, severity
 OPTIONS (require_partition_filter = TRUE);
 
--- ── FEATURE ENGINEERING (ML Platform) ─────────────────────────────────────
--- Phase 1: Vendor Daily Features
--- Purpose: Behavioral feature store for future ML models (Vertex AI)
--- Source: Aggregates from silver_deduplicated_invoices + gold_fraud_alerts
--- Usage: Vendor Trust Score, Fraud Probability Models, Risk Ranking
--- Pattern: Daily aggregation per vendor (feature_date = invoice_timestamp date)
-CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_features` (
+-- ══════════════════════════════════════════════════════════════════════════
+-- FEATURE ENGINEERING (ML Platform) - PRODUCTION ARCHITECTURE
+-- ══════════════════════════════════════════════════════════════════════════
+--
+-- ARCHITECTURE PRINCIPLE:
+--   Feature engineering is INDEPENDENT from Gold fraud detection layer.
+--   
+--   Silver (invoices)
+--     ├── Gold (fraud alerts) - independent
+--     └── Feature Engineering - independent
+--         ├── Behavioral Features (from silver ONLY)
+--         └── Risk Features (from gold ONLY)
+--
+-- WHY SEPARATE TABLES?
+--   1. Stability: Behavioral features don't change when fraud rules evolve
+--   2. Reusability: Same behavioral features used by multiple ML models
+--   3. Clear Separation: Features (X) vs Labels (y) for supervised learning
+--   4. Production Pattern: Google, Netflix, Uber use separate feature/label stores
+--
+-- TABLES:
+--   1. vendor_daily_behavioral_features (PRIMARY) - behavioral signals only
+--   2. vendor_daily_risk_features (OPTIONAL) - fraud labels/risk signals
+--   3. vendor_daily_features (VIEW) - joins behavioral + risk for ML training
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- TABLE 1: Behavioral Features (INDEPENDENT from fraud detection)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Source: silver_deduplicated_invoices ONLY
+-- Purpose: Stable, reusable behavioral features for all ML models
+-- Pattern: Daily aggregation per vendor
+-- 
+-- DESIGN DECISIONS:
+--   - Partition by feature_date: Cost optimization (query only needed dates)
+--   - Cluster by vendor_id: Most queries filter by vendor
+--   - Rolling windows (7d, 30d): Computed via scheduled query (see compute_rolling_features.sql)
+--   - NO alert features: Behavioral features are intrinsic, not derived from rules
+--
+CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_behavioral_features` (
     vendor_id                STRING NOT NULL,
     feature_date             DATE NOT NULL,
     
     -- VOLUME FEATURES (capture spending patterns)
-    -- ML models use these to detect sudden volume changes or unusual spending
-    invoice_count            INT64,              -- How many invoices this vendor submitted today
-    total_invoice_amount     NUMERIC(15, 2),     -- Total dollar amount spent today
-    avg_invoice_amount       NUMERIC(15, 2),     -- Average invoice size (detects micro/macro fraud)
-    min_invoice_amount       NUMERIC(15, 2),     -- Smallest invoice (detects split invoicing fraud)
-    max_invoice_amount       NUMERIC(15, 2),     -- Largest invoice (detects inflated billing)
-    stddev_invoice_amount    NUMERIC(15, 2),     -- Invoice consistency (low = routine, high = erratic)
+    invoice_count            INT64 NOT NULL,           -- Daily activity level
+    total_invoice_amount     NUMERIC(15, 2) NOT NULL,  -- Daily spending volume
+    avg_invoice_amount       NUMERIC(15, 2) NOT NULL,  -- Typical invoice size
+    min_invoice_amount       NUMERIC(15, 2) NOT NULL,  -- Distribution lower bound
+    max_invoice_amount       NUMERIC(15, 2) NOT NULL,  -- Distribution upper bound
+    stddev_invoice_amount    NUMERIC(15, 2) NOT NULL,  -- Invoice volatility/consistency
     
     -- TEMPORAL FEATURES (capture timing patterns)
-    -- ML models use these to detect automation, bot activity, or coordinated fraud
-    avg_invoices_per_hour    FLOAT64,            -- Invoice submission rate (detects bot flooding)
-    latest_invoice_timestamp TIMESTAMP,          -- Most recent activity (used for recency weighting)
+    avg_invoices_per_hour    FLOAT64 NOT NULL,         -- Submission rate (bot detection)
+    latest_invoice_timestamp TIMESTAMP,                -- Recency (for time decay weighting)
     
-    -- ALERT FEATURES (capture risk signals)
-    -- ML models use these as labels and features for supervised learning
-    anomaly_alert_count      INT64,              -- Count of ANOMALY rule triggers today
-    velocity_alert_count     INT64,              -- Count of VELOCITY rule triggers today
-    duplicate_alert_count    INT64,              -- Count of DUPLICATE rule triggers today (future)
-    total_alert_count        INT64,              -- Total alerts (any rule type)
-    high_risk_alert_ratio    FLOAT64,            -- Alerts / Invoices (0.0 - 1.0, fraud propensity)
+    -- ROLLING WINDOW FEATURES (computed via BigQuery scheduled query)
+    -- These capture temporal context: "Is this unusual for this vendor THIS WEEK?"
+    -- ML models with rolling features have 20-40% higher AUC than single-day features.
+    invoice_count_7d         INT64,                    -- 7-day rolling sum
+    invoice_count_30d        INT64,                    -- 30-day rolling sum
+    avg_invoice_amount_7d    NUMERIC(15, 2),           -- 7-day rolling average
+    avg_invoice_amount_30d   NUMERIC(15, 2),           -- 30-day rolling average
     
     -- METADATA
-    computed_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+    computed_at              TIMESTAMP NOT NULL
+)
+PARTITION BY feature_date
+CLUSTER BY vendor_id
+OPTIONS (
+    require_partition_filter = TRUE,
+    description = 'ML Feature Store: Pure behavioral features (independent from fraud rules)'
+);
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- TABLE 2: Risk Features (OPTIONAL - labels for supervised learning)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Source: gold_fraud_alerts ONLY
+-- Purpose: Ground truth labels derived from fraud detection rules
+-- Pattern: Daily aggregation per vendor (only vendors with alerts)
+--
+-- DESIGN DECISIONS:
+--   - Separate from behavioral features: Rule logic evolves, features don't
+--   - OPTIONAL: Can skip for unsupervised learning or pure feature engineering
+--   - Sparse table: Only vendors with alerts (most vendors are clean)
+--   - JOIN with behavioral at query time (not at storage time)
+--
+CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_risk_features` (
+    vendor_id                STRING NOT NULL,
+    feature_date             DATE NOT NULL,
+    
+    -- ALERT COUNT FEATURES (fraud signals)
+    anomaly_alert_count      INT64 NOT NULL,           -- ANOMALY rule triggers
+    velocity_alert_count     INT64 NOT NULL,           -- VELOCITY rule triggers
+    duplicate_alert_count    INT64 NOT NULL,           -- DUPLICATE rule triggers
+    total_alert_count        INT64 NOT NULL,           -- Total alerts (any type)
+    
+    -- DERIVED RISK SCORE (computed via BigQuery scheduled query)
+    high_risk_alert_ratio    FLOAT64,                  -- alerts / invoice_count (0.0-1.0)
+    
+    -- ROLLING RISK WINDOWS (computed via BigQuery scheduled query)
+    -- Capture vendor risk trajectory: "Has this vendor been risky for weeks?"
+    anomaly_count_30d        INT64,                    -- 30-day anomaly history
+    velocity_count_30d       INT64,                    -- 30-day velocity history
+    total_alert_count_30d    INT64,                    -- 30-day total alert history
+    
+    -- METADATA
+    computed_at              TIMESTAMP NOT NULL
 )
 PARTITION BY feature_date
 CLUSTER BY vendor_id, total_alert_count DESC
 OPTIONS (
     require_partition_filter = TRUE,
-    description = 'ML Feature Store: Daily vendor behavioral features for fraud detection models'
+    description = 'ML Label Store: Risk signals derived from fraud detection rules'
 );
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- VIEW: vendor_daily_features (JOIN behavioral + risk for ML training)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Purpose: Single table for Vertex AI export, training, dashboards
+-- Pattern: LEFT JOIN (all vendors, even those with no alerts)
+--
+-- WHY A VIEW?
+--   - Flexibility: Can change join logic without recomputing features
+--   - Storage: No duplicate data (behavioral + risk stored once)
+--   - Clean Separation: Source tables remain independent
+--   - Production Pattern: Large companies use views for ML training tables
+--
+-- USAGE:
+--   SELECT * FROM vendor_daily_features WHERE feature_date >= '2026-01-01'
+--   (View handles join, coalescing NULLs to 0 for clean vendors)
+--
+CREATE OR REPLACE VIEW `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_features` AS
+SELECT 
+    -- Primary key
+    b.vendor_id,
+    b.feature_date,
+    
+    -- BEHAVIORAL FEATURES (always present)
+    b.invoice_count,
+    b.total_invoice_amount,
+    b.avg_invoice_amount,
+    b.min_invoice_amount,
+    b.max_invoice_amount,
+    b.stddev_invoice_amount,
+    b.avg_invoices_per_hour,
+    b.latest_invoice_timestamp,
+    
+    -- ROLLING BEHAVIORAL FEATURES
+    b.invoice_count_7d,
+    b.invoice_count_30d,
+    b.avg_invoice_amount_7d,
+    b.avg_invoice_amount_30d,
+    
+    -- RISK FEATURES (NULL for clean vendors → COALESCE to 0)
+    COALESCE(r.anomaly_alert_count, 0) AS anomaly_alert_count,
+    COALESCE(r.velocity_alert_count, 0) AS velocity_alert_count,
+    COALESCE(r.duplicate_alert_count, 0) AS duplicate_alert_count,
+    COALESCE(r.total_alert_count, 0) AS total_alert_count,
+    COALESCE(r.high_risk_alert_ratio, 0.0) AS high_risk_alert_ratio,
+    
+    -- ROLLING RISK FEATURES
+    COALESCE(r.anomaly_count_30d, 0) AS anomaly_count_30d,
+    COALESCE(r.velocity_count_30d, 0) AS velocity_count_30d,
+    COALESCE(r.total_alert_count_30d, 0) AS total_alert_count_30d,
+    
+    -- METADATA
+    b.computed_at AS behavioral_computed_at,
+    r.computed_at AS risk_computed_at
+    
+FROM `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_behavioral_features` b
+LEFT JOIN `${BQ_PROJECT}.${BQ_DATASET}.vendor_daily_risk_features` r
+    ON b.vendor_id = r.vendor_id
+    AND b.feature_date = r.feature_date
+
+-- Filter to reduce view size (optional - remove if you want all history)
+-- WHERE b.feature_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+;
 
 -- ── VENDOR BASELINE (small dim table, no partitioning needed) ───────────
 CREATE TABLE IF NOT EXISTS `${BQ_PROJECT}.${BQ_DATASET}.vendor_90day_baseline` (

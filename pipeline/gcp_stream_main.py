@@ -39,9 +39,13 @@ from pipeline.transforms import (
     event_to_bronze_row,
 )
 from pipeline.schemas import ErpInvoiceEvent
-from pipeline.feature_engineering import (
-    BuildVendorDailyFeatures,
-    VENDOR_DAILY_FEATURES_SCHEMA,
+from pipeline.behavioral_features import (
+    BuildVendorDailyBehavioralFeatures,
+    VENDOR_DAILY_BEHAVIORAL_FEATURES_SCHEMA,
+)
+from pipeline.risk_features import (
+    BuildVendorDailyRiskFeatures,
+    VENDOR_DAILY_RISK_FEATURES_SCHEMA,
 )
 
 
@@ -208,7 +212,8 @@ def run(argv=None) -> None:
     bronze_table = f"{known_args.bq_dataset}.bronze_raw_events"
     silver_table = f"{known_args.bq_dataset}.silver_deduplicated_invoices"
     gold_table   = f"{known_args.bq_dataset}.gold_fraud_alerts"
-    features_table = f"{known_args.bq_dataset}.vendor_daily_features"
+    behavioral_features_table = f"{known_args.bq_dataset}.vendor_daily_behavioral_features"
+    risk_features_table = f"{known_args.bq_dataset}.vendor_daily_risk_features"
 
     baseline_dict = load_baseline_from_bq(project, known_args.bq_dataset)
 
@@ -324,32 +329,48 @@ def run(argv=None) -> None:
             )
         )
 
-        # ─── FEATURE ENGINEERING (ML Platform - Phase 1) ─────────────────────────────
-        # Build vendor-day behavioral features from silver invoices + gold alerts.
-        # Streaming mode: Features computed in daily tumbling windows.
-        # Purpose: Create feature store for future Vertex AI models.
+        # ─── FEATURE ENGINEERING (ML Platform - Refactored) ──────────────────────────────
+        # PRODUCTION ARCHITECTURE:
+        #   Feature engineering is INDEPENDENT from Gold fraud detection layer.
+        #   Streaming mode: Features computed continuously as events arrive.
+        #
+        # OUTPUTS:
+        #   1. vendor_daily_behavioral_features (behavioral signals only)
+        #   2. vendor_daily_risk_features (fraud labels only)
+        #   3. vendor_daily_features (VIEW joining 1 + 2)
         
-        # Collect alerts (already flattened from velocity + anomaly)
+        # ─── BEHAVIORAL FEATURES (from silver invoices only) ────────────────────
+        behavioral_features = (
+            deduped["unique"]
+            | "BuildBehavioralFeatures" >> BuildVendorDailyBehavioralFeatures()
+        )
+        
+        (
+            behavioral_features
+            | "WriteBehavioralFeatures" >> WriteToBigQuery(
+                table=behavioral_features_table,
+                schema=VENDOR_DAILY_BEHAVIORAL_FEATURES_SCHEMA,
+                write_disposition=BigQueryDisposition.WRITE_APPEND,
+                create_disposition=BigQueryDisposition.CREATE_NEVER,
+            )
+        )
+        
+        # ─── RISK FEATURES (from gold alerts only) ────────────────────────────
         gold_alerts = (
             (velocity, anomaly)
-            | "FlatAlertsForFeatures" >> beam.Flatten()
+            | "FlatAlertsForRiskFeatures" >> beam.Flatten()
         )
         
-        # Build features by joining silver invoices + gold alerts
-        vendor_features = (
-            {
-                'invoices': deduped["unique"],
-                'alerts': gold_alerts,
-            }
-            | "BuildVendorFeatures" >> BuildVendorDailyFeatures()
+        risk_features = (
+            gold_alerts
+            | "BuildRiskFeatures" >> BuildVendorDailyRiskFeatures()
         )
         
-        # Write to vendor_daily_features table
         (
-            vendor_features
-            | "WriteFeatures" >> WriteToBigQuery(
-                table=features_table,
-                schema=VENDOR_DAILY_FEATURES_SCHEMA,
+            risk_features
+            | "WriteRiskFeatures" >> WriteToBigQuery(
+                table=risk_features_table,
+                schema=VENDOR_DAILY_RISK_FEATURES_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,
                 create_disposition=BigQueryDisposition.CREATE_NEVER,
             )

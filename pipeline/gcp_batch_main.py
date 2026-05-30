@@ -44,9 +44,13 @@ from pipeline.transforms import (
     event_to_bronze_row,
 )
 from pipeline.schemas import ErpInvoiceEvent
-from pipeline.feature_engineering import (
-    BuildVendorDailyFeatures,
-    VENDOR_DAILY_FEATURES_SCHEMA,
+from pipeline.behavioral_features import (
+    BuildVendorDailyBehavioralFeatures,
+    VENDOR_DAILY_BEHAVIORAL_FEATURES_SCHEMA,
+)
+from pipeline.risk_features import (
+    BuildVendorDailyRiskFeatures,
+    VENDOR_DAILY_RISK_FEATURES_SCHEMA,
 )
 
 
@@ -210,7 +214,8 @@ def run(argv=None) -> None:
     bronze_table = f"{known_args.bq_dataset}.bronze_raw_events"
     silver_table = f"{known_args.bq_dataset}.silver_deduplicated_invoices"
     gold_table   = f"{known_args.bq_dataset}.gold_fraud_alerts"
-    features_table = f"{known_args.bq_dataset}.vendor_daily_features"
+    behavioral_features_table = f"{known_args.bq_dataset}.vendor_daily_behavioral_features"
+    risk_features_table = f"{known_args.bq_dataset}.vendor_daily_risk_features"
 
     baseline_dict = load_baseline_from_bq(project, known_args.bq_dataset)
 
@@ -305,37 +310,74 @@ def run(argv=None) -> None:
             )
         )
 
-        # ─── FEATURE ENGINEERING (ML Platform - Phase 1) ─────────────────────────────
-        # Build vendor-day behavioral features from silver invoices + gold alerts.
-        # This is a NEW downstream layer - existing fraud logic remains unchanged.
-        # Purpose: Create feature store for future Vertex AI models.
+        # ─── FEATURE ENGINEERING (ML Platform - Refactored) ──────────────────────────────
+        # PRODUCTION ARCHITECTURE:
+        #   Feature engineering is INDEPENDENT from Gold fraud detection layer.
+        #   
+        #   Silver invoices
+        #     ├── Gold (fraud alerts) - independent
+        #     └── Feature Engineering - independent
+        #         ├── Behavioral Features (from silver ONLY)
+        #         └── Risk Features (from gold ONLY)
+        #
+        # WHY SEPARATE?
+        #   - Behavioral features are stable (invoice schema rarely changes)
+        #   - Risk features are volatile (fraud rules evolve)
+        #   - Clear separation: features (X) vs labels (y)
+        #   - Production pattern used by Google, Netflix, Uber
+        #
+        # OUTPUTS:
+        #   1. vendor_daily_behavioral_features (behavioral signals only)
+        #   2. vendor_daily_risk_features (fraud labels only)
+        #   3. vendor_daily_features (VIEW joining 1 + 2)
         
-        # Collect alerts (already flattened from velocity + anomaly)
-        gold_alerts = (
-            (velocity, anomaly)
-            | "FlatAlertsForFeatures" >> beam.Flatten()
+        # ─── BEHAVIORAL FEATURES (from silver invoices only) ────────────────────
+        # NO dependency on gold_fraud_alerts.
+        # Pure behavioral features: volume, temporal, statistical.
+        behavioral_features = (
+            deduped["unique"]
+            | "BuildBehavioralFeatures" >> BuildVendorDailyBehavioralFeatures()
         )
         
-        # Build features by joining silver invoices + gold alerts
-        vendor_features = (
-            {
-                'invoices': deduped["unique"],
-                'alerts': gold_alerts,
-            }
-            | "BuildVendorFeatures" >> BuildVendorDailyFeatures()
-        )
-        
-        # Write to vendor_daily_features table
         (
-            vendor_features
-            | "WriteFeatures" >> WriteToBigQuery(
-                table=features_table,
-                schema=VENDOR_DAILY_FEATURES_SCHEMA,
+            behavioral_features
+            | "WriteBehavioralFeatures" >> WriteToBigQuery(
+                table=behavioral_features_table,
+                schema=VENDOR_DAILY_BEHAVIORAL_FEATURES_SCHEMA,
                 write_disposition=BigQueryDisposition.WRITE_APPEND,
                 create_disposition=BigQueryDisposition.CREATE_NEVER,
                 method=WriteToBigQuery.Method.FILE_LOADS,
             )
         )
+        
+        # ─── RISK FEATURES (from gold alerts only) ────────────────────────────
+        # NO dependency on silver_deduplicated_invoices.
+        # Pure risk signals: alert counts, fraud labels.
+        gold_alerts = (
+            (velocity, anomaly)
+            | "FlatAlertsForRiskFeatures" >> beam.Flatten()
+        )
+        
+        risk_features = (
+            gold_alerts
+            | "BuildRiskFeatures" >> BuildVendorDailyRiskFeatures()
+        )
+        
+        (
+            risk_features
+            | "WriteRiskFeatures" >> WriteToBigQuery(
+                table=risk_features_table,
+                schema=VENDOR_DAILY_RISK_FEATURES_SCHEMA,
+                write_disposition=BigQueryDisposition.WRITE_APPEND,
+                create_disposition=BigQueryDisposition.CREATE_NEVER,
+                method=WriteToBigQuery.Method.FILE_LOADS,
+            )
+        )
+        
+        # ─── ROLLING WINDOWS ───────────────────────────────────────────────
+        # Computed via BigQuery scheduled query (not Beam).
+        # See: gcp/compute_rolling_features.sql
+        # Schedule: Daily at 2 AM
 
     log.info("Batch job finished ✅ — Dataflow worker will now scale to zero.")
 
