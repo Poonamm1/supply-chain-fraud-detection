@@ -334,14 +334,26 @@ def run(argv=None) -> None:
         #   Feature engineering is INDEPENDENT from Gold fraud detection layer.
         #   Streaming mode: Features computed continuously as events arrive.
         #
+        # STREAMING WINDOWING:
+        #   Since we're aggregating vendor-day features, we use DAILY windows.
+        #   FixedWindows(24 hours) aligns with vendor-day granularity.
+        #   AfterWatermark trigger ensures we process complete daily batches.
+        #
         # OUTPUTS:
         #   1. vendor_daily_behavioral_features (behavioral signals only)
         #   2. vendor_daily_risk_features (fraud labels only)
         #   3. vendor_daily_features (VIEW joining 1 + 2)
         
         # ─── BEHAVIORAL FEATURES (from silver invoices only) ────────────────────
+        # FIX: Add daily windowing BEFORE GroupByKey (required for streaming)
         behavioral_features = (
             deduped["unique"]
+            | "WindowBehavioralDaily" >> beam.WindowInto(
+                beam.window.FixedWindows(24 * 60 * 60),  # 24 hours = 1 day
+                trigger=beam.trigger.AfterWatermark(),
+                accumulation_mode=beam.trigger.AccumulationMode.DISCARDING,
+                allowed_lateness=0
+            )
             | "BuildBehavioralFeatures" >> BuildVendorDailyBehavioralFeatures()
         )
         
@@ -356,9 +368,16 @@ def run(argv=None) -> None:
         )
         
         # ─── RISK FEATURES (from gold alerts only) ────────────────────────────
+        # FIX: Add daily windowing BEFORE GroupByKey (required for streaming)
         gold_alerts = (
             (velocity, anomaly)
             | "FlatAlertsForRiskFeatures" >> beam.Flatten()
+            | "WindowRiskDaily" >> beam.WindowInto(
+                beam.window.FixedWindows(24 * 60 * 60),  # 24 hours = 1 day
+                trigger=beam.trigger.AfterWatermark(),
+                accumulation_mode=beam.trigger.AccumulationMode.DISCARDING,
+                allowed_lateness=0
+            )
         )
         
         risk_features = (
